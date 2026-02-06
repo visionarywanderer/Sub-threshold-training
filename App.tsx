@@ -14,8 +14,8 @@ declare global {
   }
 }
 
-const RUN_STORAGE_KEY = 'norskflow_run_profile';
-const ICU_CONFIG_KEY = 'norskflow_icu_config';
+const RUN_STORAGE_KEY_PREFIX = 'norskflow_run_profile';
+const ICU_CONFIG_KEY_PREFIX = 'norskflow_icu_config';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID as string | undefined;
 const FIVE_K_DISTANCE = 5000;
 
@@ -31,15 +31,28 @@ const DEFAULT_RUN_SCHEDULE: UserSchedule = {
   'Thursday': DayType.THRESHOLD, 'Friday': DayType.EASY, 'Saturday': DayType.REST, 'Sunday': DayType.THRESHOLD
 };
 
+const EMPTY_RUN_SCHEDULE: UserSchedule = {
+  'Monday': DayType.REST, 'Tuesday': DayType.REST, 'Wednesday': DayType.REST,
+  'Thursday': DayType.REST, 'Friday': DayType.REST, 'Saturday': DayType.REST, 'Sunday': DayType.REST
+};
+
 const DEFAULT_RUN_PROFILE: UserProfile = {
   name: "Guest Runner", raceDistance: FIVE_K_DISTANCE, raceTime: "19:07", maxHR: 190, weeklyVolume: 80,
   unit: DistanceUnit.KM, schedule: DEFAULT_RUN_SCHEDULE, warmupDist: 2.0, cooldownDist: 1.0
+};
+
+const EMPTY_RUN_PROFILE: UserProfile = {
+  name: '', raceDistance: FIVE_K_DISTANCE, raceTime: '', maxHR: 0, weeklyVolume: 0,
+  unit: DistanceUnit.KM, schedule: EMPTY_RUN_SCHEDULE, warmupDist: 0, cooldownDist: 0
 };
 
 const normalizeTo5kProfile = (profile: UserProfile): UserProfile => ({
   ...profile,
   raceDistance: FIVE_K_DISTANCE,
 });
+
+const getProfileStorageKey = (uid: string): string => `${RUN_STORAGE_KEY_PREFIX}_${uid}`;
+const getIcuStorageKey = (uid: string): string => `${ICU_CONFIG_KEY_PREFIX}_${uid}`;
 
 interface WeatherSnapshot {
   temperatureC: number;
@@ -49,7 +62,7 @@ interface WeatherSnapshot {
 }
 
 const App: React.FC = () => {
-  const [profile, setProfile] = useState<UserProfile>(DEFAULT_RUN_PROFILE);
+  const [profile, setProfile] = useState<UserProfile>(EMPTY_RUN_PROFILE);
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
   const [activeTab, setActiveTab] = useState<'plan' | 'pacing' | 'settings'>('plan'); 
   const [showIntervalsModal, setShowIntervalsModal] = useState(false);
@@ -65,20 +78,12 @@ const App: React.FC = () => {
     return formatLocalDate(d);
   });
 
-  // Load configs on mount
+  // Logged-out default: empty profile and no connected integrations.
   useEffect(() => {
-    const savedIcu = localStorage.getItem(ICU_CONFIG_KEY);
-    if (savedIcu) setIntervalsConfig(JSON.parse(savedIcu));
-
-    const savedProfile = localStorage.getItem(RUN_STORAGE_KEY);
-    if (savedProfile) {
-      const parsed = normalizeTo5kProfile(JSON.parse(savedProfile));
-      setProfile(parsed);
-      setIsAuthenticated(!!parsed.uid);
-      setPlan(generatePlan(parsed, 0));
-    } else {
-      setPlan(generatePlan(DEFAULT_RUN_PROFILE, 0));
-    }
+    setProfile(EMPTY_RUN_PROFILE);
+    setPlan(generatePlan(EMPTY_RUN_PROFILE, 0));
+    setIntervalsConfig({ athleteId: '', apiKey: '', connected: false });
+    setIsAuthenticated(false);
   }, []);
 
   const fetchWeather = useCallback(() => {
@@ -123,12 +128,31 @@ const App: React.FC = () => {
   const handleCredentialResponse = useCallback((response: any) => {
     const userData = JSON.parse(atob(response.credential.split('.')[1]));
     if (userData) {
-      setProfile(prev => {
-        const newProfile = normalizeTo5kProfile({ ...prev, uid: userData.sub, email: userData.email, name: userData.name });
-        localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(newProfile));
-        setPlan(generatePlan(newProfile, 0));
-        return newProfile;
-      });
+      const uid = String(userData.sub || '');
+      const profileKey = getProfileStorageKey(uid);
+      const icuKey = getIcuStorageKey(uid);
+      const savedProfile = localStorage.getItem(profileKey);
+      const savedIcu = localStorage.getItem(icuKey);
+
+      const userProfile = savedProfile
+        ? normalizeTo5kProfile(JSON.parse(savedProfile))
+        : normalizeTo5kProfile({
+            ...EMPTY_RUN_PROFILE,
+            uid,
+            email: userData.email,
+            name: userData.name || ''
+          });
+
+      const nextProfile = {
+        ...userProfile,
+        uid,
+        email: userData.email,
+        name: userData.name || userProfile.name
+      };
+
+      setProfile(nextProfile);
+      setPlan(generatePlan(nextProfile, 0));
+      setIntervalsConfig(savedIcu ? JSON.parse(savedIcu) : { athleteId: '', apiKey: '', connected: false });
       setIsAuthenticated(true);
     }
   }, []);
@@ -163,9 +187,10 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem(RUN_STORAGE_KEY);
     setIsAuthenticated(false);
-    setProfile(DEFAULT_RUN_PROFILE);
+    setProfile(EMPTY_RUN_PROFILE);
+    setPlan(generatePlan(EMPTY_RUN_PROFILE, weatherPaceDeltaSec));
+    setIntervalsConfig({ athleteId: '', apiKey: '', connected: false });
     if (window.google) window.google.accounts.id.disableAutoSelect();
   };
 
@@ -181,11 +206,13 @@ const App: React.FC = () => {
     setProfile(normalized);
     setPlan(newPlan);
     setActiveTab('plan');
-    localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(normalized));
+    if (isAuthenticated && normalized.uid) {
+      localStorage.setItem(getProfileStorageKey(normalized.uid), JSON.stringify(normalized));
+    }
   };
 
   const handleSyncEntireWeekToIcu = async (weekStartDate: string) => {
-    if (!plan || !intervalsConfig.connected) return;
+    if (!plan || !intervalsConfig.connected || !isAuthenticated) return;
     setSyncStatus('syncing');
     
     try {
@@ -313,7 +340,7 @@ const App: React.FC = () => {
                  <button onClick={() => setActiveTab('pacing')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'pacing' ? 'bg-white shadow-sm text-norway-blue' : 'text-slate-500 hover:text-slate-700'}`}>Pacing Table</button>
               </nav>
               <div className="flex gap-2">
-                 {intervalsConfig.connected && (
+                 {isAuthenticated && intervalsConfig.connected && (
                    <div className="flex items-center gap-3 bg-white border border-slate-200 px-4 py-1.5 rounded-xl shadow-sm">
                       <button 
                         onClick={() => setShowScheduleWeekModal(true)}
@@ -354,6 +381,7 @@ const App: React.FC = () => {
                                 paceCorrectionSec={weatherPaceDeltaSec}
                                 onSync={async (id) => {
                                     if(!intervalsConfig.connected) {
+                                        if (!isAuthenticated) return;
                                         setShowIntervalsModal(true);
                                         return;
                                     }
@@ -461,11 +489,15 @@ const App: React.FC = () => {
                         
                         <div className="flex flex-wrap gap-4 w-full justify-center">
                             <button 
-                                onClick={() => setShowIntervalsModal(true)}
-                                className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-bold text-sm shadow-lg transition-all ${intervalsConfig.connected ? 'bg-green-600 text-white' : 'bg-slate-800 text-white hover:bg-black'}`}
+                                onClick={() => {
+                                  if (!isAuthenticated) return;
+                                  setShowIntervalsModal(true);
+                                }}
+                                disabled={!isAuthenticated}
+                                className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-bold text-sm shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${intervalsConfig.connected ? 'bg-green-600 text-white' : 'bg-slate-800 text-white hover:bg-black'}`}
                             >
                                 {intervalsConfig.connected ? <Check size={18} /> : <Globe size={18} />}
-                                {intervalsConfig.connected ? 'Intervals.icu Connected' : 'Connect Intervals.icu'}
+                                {!isAuthenticated ? 'Login to connect Intervals.icu' : intervalsConfig.connected ? 'Intervals.icu Connected' : 'Connect Intervals.icu'}
                             </button>
                         </div>
                     </div>
@@ -479,8 +511,9 @@ const App: React.FC = () => {
         isOpen={showIntervalsModal} 
         onClose={() => setShowIntervalsModal(false)} 
         onConnect={(c) => {
+            if (!isAuthenticated || !profile.uid) return;
             setIntervalsConfig(c);
-            localStorage.setItem(ICU_CONFIG_KEY, JSON.stringify(c));
+            localStorage.setItem(getIcuStorageKey(profile.uid), JSON.stringify(c));
         }} 
       />
       <ScheduleWeekModal
