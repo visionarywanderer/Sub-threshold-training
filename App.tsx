@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, DailyPlan, IntervalsIcuConfig, WorkoutType } from './types';
+import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig } from './types';
 import { generatePlan, calculateThresholdPace, secondsToTime } from './utils/calculations';
 import { syncWorkoutToIcu } from './services/intervalsService';
 import WorkoutCard from './components/WorkoutCard';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
-import { Activity, ChevronUp, ChevronDown, MoreHorizontal, PlayCircle, LogOut, Check, Globe, Zap, RefreshCw } from 'lucide-react';
+import { ChevronUp, ChevronDown, MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -15,7 +15,15 @@ declare global {
 
 const RUN_STORAGE_KEY = 'norskflow_run_profile';
 const ICU_CONFIG_KEY = 'norskflow_icu_config';
-const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID as string | undefined;
+const FIVE_K_DISTANCE = 5000;
+
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const DEFAULT_RUN_SCHEDULE: UserSchedule = {
   'Monday': DayType.EASY, 'Tuesday': DayType.THRESHOLD, 'Wednesday': DayType.EASY,
@@ -23,9 +31,14 @@ const DEFAULT_RUN_SCHEDULE: UserSchedule = {
 };
 
 const DEFAULT_RUN_PROFILE: UserProfile = {
-  name: "Guest Runner", raceDistance: 5000, raceTime: "19:07", maxHR: 190, weeklyVolume: 80,
+  name: "Guest Runner", raceDistance: FIVE_K_DISTANCE, raceTime: "19:07", maxHR: 190, weeklyVolume: 80,
   unit: DistanceUnit.KM, schedule: DEFAULT_RUN_SCHEDULE, warmupDist: 2.0, cooldownDist: 1.0
 };
+
+const normalizeTo5kProfile = (profile: UserProfile): UserProfile => ({
+  ...profile,
+  raceDistance: FIVE_K_DISTANCE,
+});
 
 const App: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_RUN_PROFILE);
@@ -38,7 +51,7 @@ const App: React.FC = () => {
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + (1 - d.getDay() + 7) % 7); // Next Monday
-    return d.toISOString().split('T')[0];
+    return formatLocalDate(d);
   });
 
   // Load configs on mount
@@ -48,7 +61,7 @@ const App: React.FC = () => {
 
     const savedProfile = localStorage.getItem(RUN_STORAGE_KEY);
     if (savedProfile) {
-      const parsed = JSON.parse(savedProfile);
+      const parsed = normalizeTo5kProfile(JSON.parse(savedProfile));
       setProfile(parsed);
       setIsAuthenticated(!!parsed.uid);
       setPlan(generatePlan(parsed));
@@ -61,7 +74,7 @@ const App: React.FC = () => {
     const userData = JSON.parse(atob(response.credential.split('.')[1]));
     if (userData) {
       setProfile(prev => {
-        const newProfile = { ...prev, uid: userData.sub, email: userData.email, name: userData.name };
+        const newProfile = normalizeTo5kProfile({ ...prev, uid: userData.sub, email: userData.email, name: userData.name });
         localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(newProfile));
         setPlan(generatePlan(newProfile));
         return newProfile;
@@ -72,6 +85,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initGoogle = () => {
+      if (!GOOGLE_CLIENT_ID) return;
       if (typeof window.google !== 'undefined' && window.google.accounts) {
         window.google.accounts.id.initialize({
           client_id: GOOGLE_CLIENT_ID,
@@ -106,10 +120,12 @@ const App: React.FC = () => {
   };
 
   const handleGeneratePlan = () => {
-    const newPlan = generatePlan(profile);
+    const normalized = normalizeTo5kProfile(profile);
+    const newPlan = generatePlan(normalized);
+    setProfile(normalized);
     setPlan(newPlan);
     setActiveTab('plan');
-    localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(profile));
+    localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(normalized));
   };
 
   const handleSyncEntireWeekToIcu = async () => {
@@ -123,7 +139,7 @@ const App: React.FC = () => {
         if (day.session) {
           const targetDate = new Date(startDate);
           targetDate.setDate(targetDate.getDate() + i);
-          const dateStr = targetDate.toISOString().split('T')[0];
+          const dateStr = formatLocalDate(targetDate);
           
           const eventId = await syncWorkoutToIcu(intervalsConfig, day.session, dateStr);
           if (eventId) {
@@ -161,7 +177,7 @@ const App: React.FC = () => {
   };
 
   // Logic updated to pass profile for new threshold pacing
-  const currentThreshold = calculateThresholdPace(profile);
+  const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile);
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-slate-900 font-sans pb-20">
@@ -185,8 +201,10 @@ const App: React.FC = () => {
                     <LogOut size={14} />
                   </button>
                </div>
-             ) : (
+             ) : GOOGLE_CLIENT_ID ? (
                <div id="google-login-btn"></div>
+             ) : (
+               <span className="text-xs text-slate-400">Set GOOGLE_CLIENT_ID to enable sign-in</span>
              )}
           </div>
         </div>
@@ -197,7 +215,7 @@ const App: React.FC = () => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 mb-10">
                 <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Benchmark</p>
-                    <p className="text-2xl font-bold text-slate-900">{profile.raceTime}</p>
+                    <p className="text-2xl font-bold text-slate-900">{profile.raceTime} (5K)</p>
                 </div>
                 <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">SubT Pace</p>
@@ -271,7 +289,7 @@ const App: React.FC = () => {
                                     }
                                     const targetDate = new Date(startDate);
                                     targetDate.setDate(targetDate.getDate() + idx);
-                                    const newEventId = await syncWorkoutToIcu(intervalsConfig, day.session!, targetDate.toISOString().split('T')[0]);
+                                    const newEventId = await syncWorkoutToIcu(intervalsConfig, day.session!, formatLocalDate(targetDate));
                                     if(newEventId) {
                                         const newDays = [...plan.days];
                                         newDays[idx].session = { ...day.session!, icuEventId: newEventId };
@@ -313,16 +331,13 @@ const App: React.FC = () => {
                         <div className="space-y-6">
                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest border-b pb-2">Running Benchmark</h4>
                             <div>
-                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Run Distance</label>
-                                <select value={profile.raceDistance} onChange={(e) => setProfile(p => ({...p, raceDistance: parseInt(e.target.value)}))} className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold">
-                                    <option value={5000}>5K</option>
-                                    <option value={10000}>10K</option>
-                                    <option value={21097}>Half</option>
-                                    <option value={42195}>Full</option>
-                                </select>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Benchmark Distance</label>
+                                <div className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-slate-800">
+                                  5K (fixed)
+                                </div>
                             </div>
                             <div>
-                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Run Time (M:S)</label>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">5K Time (M:S)</label>
                                 <input type="text" value={profile.raceTime} onChange={(e) => setProfile(p => ({...p, raceTime: e.target.value}))} className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" />
                             </div>
                         </div>
