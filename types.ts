@@ -56,10 +56,12 @@ export interface WorkoutSession {
   warmup?: string;
   cooldown?: string;
   variants?: WorkoutSession[]; 
+  icuEventId?: number; // Intervals.icu event ID for updates
 }
 
 export interface DailyPlan {
   day: string;
+  date?: string; // ISO format date
   type: DayType;
   session: WorkoutSession | null;
 }
