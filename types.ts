@@ -64,6 +64,7 @@ export interface DailyPlan {
   date?: string; // ISO format date
   type: DayType;
   session: WorkoutSession | null;
+  icuEventId?: number; // Intervals.icu event ID for non-workout day events (e.g., rest day)
 }
 
 export interface WeeklyPlan {

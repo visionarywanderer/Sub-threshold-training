@@ -14,15 +14,16 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   if (session.intervals && session.intervals.length > 0) {
     text += `Main Set\n`;
     session.intervals.forEach((int) => {
-      const step = int.count > 1 ? `- ${int.count}x\n  ` : '- ';
       const effort = int.pace ? `${int.pace}/km` : "Sub-T";
+      const distStr = int.distance > 0 ? (int.distance < 1000 ? `${int.distance}m` : `${int.distance / 1000}km`) : "";
+      const reps = Math.max(1, Number(int.count) || 1);
 
-      const distStr = int.distance > 0 ? (int.distance < 1000 ? `${int.distance}m` : `${int.distance/1000}km`) : "";
-      const indent = int.count > 1 ? "  " : "";
-      
-      text += `${step}${distStr} ${effort}\n`;
-      if (int.rest && int.rest !== "0") {
-          text += `${indent}- Rest ${int.rest}\n`;
+      // Expand each rep into an explicit step so Intervals.icu can forward clean step data to Garmin.
+      for (let rep = 0; rep < reps; rep++) {
+        text += `- ${distStr} ${effort}\n`;
+        if (int.rest && int.rest !== "0" && rep < reps - 1) {
+          text += `- Rest ${int.rest}\n`;
+        }
       }
     });
     text += `\n`;
@@ -42,17 +43,9 @@ const getIcuType = (type: WorkoutType): string => {
     return 'Run';
 };
 
-export const syncWorkoutToIcu = async (
-  config: IntervalsIcuConfig, 
-  session: WorkoutSession, 
-  date: string
-): Promise<number | null> => {
-  if (!config.connected || !config.athleteId || !config.apiKey) return null;
-
-  const auth = btoa(`API_KEY:${config.apiKey}`);
+const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
   const icuWorkout = formatIcuWorkoutText(session);
-  
-  const payload = {
+  return {
     category: 'WORKOUT',
     type: getIcuType(session.type),
     name: session.title,
@@ -61,6 +54,17 @@ export const syncWorkoutToIcu = async (
     workout: icuWorkout,
     moving_time: session.duration * 60
   };
+};
+
+export const syncWorkoutToIcu = async (
+  config: IntervalsIcuConfig, 
+  session: WorkoutSession, 
+  date: string
+): Promise<number | null> => {
+  if (!config.connected || !config.athleteId || !config.apiKey) return null;
+
+  const auth = btoa(`API_KEY:${config.apiKey}`);
+  const payload = buildWorkoutPayload(session, date);
 
   try {
     const method = session.icuEventId ? 'PUT' : 'POST';
@@ -81,6 +85,42 @@ export const syncWorkoutToIcu = async (
     return data.id; // Returns the event ID
   } catch (error) {
     console.error('Intervals.icu Sync Error:', error);
+    return null;
+  }
+};
+
+export const syncRestDayToIcu = async (
+  config: IntervalsIcuConfig,
+  date: string,
+  eventId?: number
+): Promise<number | null> => {
+  if (!config.connected || !config.athleteId || !config.apiKey) return null;
+
+  const auth = btoa(`API_KEY:${config.apiKey}`);
+  const payload = {
+    category: 'NOTE',
+    type: 'Run',
+    name: 'Rest Day',
+    description: 'Recovery / no training scheduled.',
+    start_date_local: `${date}T08:00:00`
+  };
+
+  try {
+    const method = eventId ? 'PUT' : 'POST';
+    const url = `https://intervals.icu/api/v1/athlete/${config.athleteId}/events${eventId ? `/${eventId}` : ''}`;
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error('Failed to sync rest day to Intervals.icu');
+    const data = await response.json();
+    return data.id;
+  } catch (error) {
+    console.error('Intervals.icu Rest Day Sync Error:', error);
     return null;
   }
 };

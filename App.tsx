@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig } from './types';
 import { applyPaceCorrection, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
-import { syncWorkoutToIcu } from './services/intervalsService';
+import { syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
 import WorkoutCard from './components/WorkoutCard';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
+import ScheduleWeekModal from './components/ScheduleWeekModal';
 import { ChevronUp, ChevronDown, MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun } from 'lucide-react';
 
 declare global {
@@ -52,6 +53,7 @@ const App: React.FC = () => {
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
   const [activeTab, setActiveTab] = useState<'plan' | 'pacing' | 'settings'>('plan'); 
   const [showIntervalsModal, setShowIntervalsModal] = useState(false);
+  const [showScheduleWeekModal, setShowScheduleWeekModal] = useState(false);
   const [intervalsConfig, setIntervalsConfig] = useState<IntervalsIcuConfig>({ athleteId: '', apiKey: '', connected: false });
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -182,7 +184,7 @@ const App: React.FC = () => {
     localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(normalized));
   };
 
-  const handleSyncEntireWeekToIcu = async () => {
+  const handleSyncEntireWeekToIcu = async (weekStartDate: string) => {
     if (!plan || !intervalsConfig.connected) return;
     setSyncStatus('syncing');
     
@@ -190,20 +192,23 @@ const App: React.FC = () => {
       const newDays = [...plan.days];
       for (let i = 0; i < newDays.length; i++) {
         const day = newDays[i];
+        const targetDate = new Date(weekStartDate);
+        targetDate.setDate(targetDate.getDate() + i);
+        const dateStr = formatLocalDate(targetDate);
+
         if (day.session) {
-          const targetDate = new Date(startDate);
-          targetDate.setDate(targetDate.getDate() + i);
-          const dateStr = formatLocalDate(targetDate);
-          
           const eventId = await syncWorkoutToIcu(intervalsConfig, day.session, dateStr);
-          if (eventId) {
-            newDays[i] = { ...day, session: { ...day.session, icuEventId: eventId } };
-          }
+          if (eventId) newDays[i] = { ...day, session: { ...day.session, icuEventId: eventId }, icuEventId: undefined };
+        } else {
+          const restEventId = await syncRestDayToIcu(intervalsConfig, dateStr, day.icuEventId);
+          if (restEventId) newDays[i] = { ...day, icuEventId: restEventId };
         }
       }
       setPlan({ ...plan, days: newDays });
+      setStartDate(weekStartDate);
       setSyncStatus('success');
       setTimeout(() => setSyncStatus('idle'), 3000);
+      setShowScheduleWeekModal(false);
     } catch (e) {
       setSyncStatus('error');
     }
@@ -218,15 +223,18 @@ const App: React.FC = () => {
     // Swap content
     const tempType = newDays[index].type;
     const tempSession = newDays[index].session;
+    const tempDayEventId = newDays[index].icuEventId;
     newDays[index].type = newDays[targetIndex].type;
     newDays[index].session = newDays[targetIndex].session;
+    newDays[index].icuEventId = newDays[targetIndex].icuEventId;
     newDays[targetIndex].type = tempType;
     newDays[targetIndex].session = tempSession;
+    newDays[targetIndex].icuEventId = tempDayEventId;
 
     setPlan({ ...plan, days: newDays });
 
     if (intervalsConfig.connected && (newDays[index].session?.icuEventId || newDays[targetIndex].session?.icuEventId)) {
-        handleSyncEntireWeekToIcu();
+        handleSyncEntireWeekToIcu(startDate);
     }
   };
 
@@ -307,20 +315,13 @@ const App: React.FC = () => {
               <div className="flex gap-2">
                  {intervalsConfig.connected && (
                    <div className="flex items-center gap-3 bg-white border border-slate-200 px-4 py-1.5 rounded-xl shadow-sm">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Starts:</span>
-                      <input 
-                        type="date" 
-                        value={startDate} 
-                        onChange={(e) => setStartDate(e.target.value)} 
-                        className="text-xs font-bold text-slate-700 outline-none"
-                      />
                       <button 
-                        onClick={handleSyncEntireWeekToIcu}
+                        onClick={() => setShowScheduleWeekModal(true)}
                         disabled={syncStatus === 'syncing'}
                         className={`flex items-center gap-2 text-xs font-bold transition-all ${syncStatus === 'syncing' ? 'text-slate-300' : 'text-norway-red hover:text-red-700'}`}
                       >
                         {syncStatus === 'syncing' ? <RefreshCw className="animate-spin" size={14} /> : syncStatus === 'success' ? <Check size={14} /> : <Globe size={14} />}
-                        {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'success' ? 'Synced!' : 'Sync Week'}
+                        {syncStatus === 'syncing' ? 'Scheduling...' : syncStatus === 'success' ? 'Scheduled!' : 'Schedule Week'}
                       </button>
                    </div>
                  )}
@@ -369,6 +370,7 @@ const App: React.FC = () => {
                                 onUpdateSession={(updated) => {
                                   const newDays = [...plan.days];
                                   newDays[idx].session = updated;
+                                  newDays[idx].icuEventId = undefined;
                                   setPlan({ ...plan, days: newDays });
                                 }}
                             />
@@ -480,6 +482,13 @@ const App: React.FC = () => {
             setIntervalsConfig(c);
             localStorage.setItem(ICU_CONFIG_KEY, JSON.stringify(c));
         }} 
+      />
+      <ScheduleWeekModal
+        isOpen={showScheduleWeekModal}
+        initialDate={startDate}
+        isScheduling={syncStatus === 'syncing'}
+        onClose={() => setShowScheduleWeekModal(false)}
+        onConfirm={handleSyncEntireWeekToIcu}
       />
     </div>
   );
