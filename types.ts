@@ -1,0 +1,76 @@
+export enum DistanceUnit {
+  KM = 'km',
+  MILES = 'miles'
+}
+
+export enum DayType {
+  REST = 'Rest',
+  EASY = 'Easy Run',
+  THRESHOLD = 'Threshold',
+  LONG_RUN = 'Long Run'
+}
+
+export interface UserSchedule {
+  [key: string]: DayType;
+}
+
+export interface UserProfile {
+  uid?: string;
+  email?: string;
+  name: string;
+  raceDistance: number;
+  raceTime: string;
+  maxHR: number;
+  weeklyVolume: number;
+  unit: DistanceUnit;
+  schedule: UserSchedule;
+  warmupDist: number;
+  cooldownDist: number;
+}
+
+export enum WorkoutType {
+  EASY = 'Easy',
+  THRESHOLD = 'Threshold',
+  LONG_RUN = 'Long Run',
+  REST = 'Rest',
+  RACE = 'Race'
+}
+
+export interface Interval {
+  distance: number;
+  count: number;
+  pace: string;
+  rest: string;
+  description: string;
+}
+
+export interface WorkoutSession {
+  id: string;
+  title: string;
+  type: WorkoutType;
+  distance: number;
+  duration: number;
+  description: string;
+  intervals?: Interval[];
+  scheduled?: boolean;
+  warmup?: string;
+  cooldown?: string;
+  variants?: WorkoutSession[]; 
+}
+
+export interface DailyPlan {
+  day: string;
+  type: DayType;
+  session: WorkoutSession | null;
+}
+
+export interface WeeklyPlan {
+  totalDistance: number;
+  days: DailyPlan[];
+}
+
+export interface IntervalsIcuConfig {
+  athleteId: string;
+  apiKey: string;
+  connected: boolean;
+}

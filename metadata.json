@@ -1,0 +1,5 @@
+{
+  "name": "NorskFlow Run",
+  "description": "A specialized training plan generator based on the Norwegian Single Threshold method, adapted for marathon training with precise pacing and flexible scheduling.",
+  "requestFramePermissions": []
+}
