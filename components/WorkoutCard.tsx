@@ -1,194 +1,355 @@
-import React, { useState, useEffect } from 'react';
-import { WorkoutSession, WorkoutType, UserProfile, Interval } from '../types';
-import { CheckCircle, Zap, Globe, Clock, Activity, Plus, Minus, Settings2, ChevronRight } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { WorkoutSession, WorkoutType, UserProfile } from '../types';
+import { getIntervalPaceRange, secondsToTime, calculateThresholdPace, calculatePaceForDistance } from '../utils/calculations';
 
 interface WorkoutCardProps {
   session: WorkoutSession;
-  onSync: (id: string) => void;
-  isSynced: boolean;
   profile: UserProfile;
-  onUpdateSession: (updated: WorkoutSession) => void;
+  onUpdateSession: (session: WorkoutSession) => void;
+  onSync: (session: WorkoutSession) => void;
+  isSynced?: boolean;
 }
 
-const WorkoutCard: React.FC<WorkoutCardProps> = ({ session: initialSession, onSync, isSynced, onUpdateSession }) => {
-  const [currentSession, setCurrentSession] = useState(initialSession);
-  const [isEditing, setIsEditing] = useState(false);
+const WorkoutCard: React.FC<WorkoutCardProps> = ({
+  session: initialSession,
+  profile,
+  onUpdateSession,
+  onSync,
+  isSynced,
+}) => {
+  const [currentSession, setCurrentSession] = useState<WorkoutSession>(initialSession);
 
   useEffect(() => {
     setCurrentSession(initialSession);
   }, [initialSession]);
 
-  const isSubT = currentSession.type === WorkoutType.THRESHOLD;
   const isEasy = currentSession.type === WorkoutType.EASY;
   const isLongRun = currentSession.type === WorkoutType.LONG_RUN;
+  const isThreshold = currentSession.type === WorkoutType.THRESHOLD;
 
-  const updateInterval = (index: number, field: keyof Interval, value: any) => {
-    if (!currentSession.intervals) return;
-    const newIntervals = [...currentSession.intervals];
-    newIntervals[index] = { ...newIntervals[index], [field]: value };
-    
-    // Recalculate total distance if it's a simple interval session
-    let newDist = currentSession.distance;
-    if (isSubT) {
-      const intervalsDist = newIntervals.reduce((sum, int) => sum + (int.count * int.distance / 1000), 0);
-      // Assuming 3km total for WU/CD if not specified, or use profile defaults
-      newDist = Math.round((3 + intervalsDist) * 10) / 10;
+  // ---------- helpers ----------
+  const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+  const recalcDerived = (session: WorkoutSession): WorkoutSession => {
+    // Recompute distance + duration where safe. Keep plan structure intact.
+    if (session.type === WorkoutType.EASY) {
+      // easy duration based on easy pace derived from threshold pace
+      const tPace = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
+      const easyPace = tPace * 1.25;
+      return {
+        ...session,
+        duration: Math.round(session.distance * (easyPace / 60)),
+        description: session.description || `Target Pace: ${secondsToTime(easyPace)}-${secondsToTime(easyPace + 30)}/km`,
+      };
     }
 
-    const updated = { ...currentSession, intervals: newIntervals, distance: newDist };
-    setCurrentSession(updated);
-    onUpdateSession(updated);
+    if (session.type === WorkoutType.THRESHOLD) {
+      // Update interval pace strings based on current interval distance
+      const newIntervals = (session.intervals || []).map((int) => {
+        const dist = Number(int.distance) || 0;
+        const paceData = getIntervalPaceRange(profile, dist);
+        return {
+          ...int,
+          distance: dist,
+          pace: paceData.range,
+          description: paceData.effort,
+        };
+      });
+
+      // Update total session distance if we can infer it from warmup/cooldown strings
+      // We do not parse warmup/cooldown here to avoid changing other logic.
+      // Keep existing session.distance unless you already update it elsewhere.
+      return { ...session, intervals: newIntervals };
+    }
+
+    if (session.type === WorkoutType.LONG_RUN) {
+      // Long run variants already have interval blocks. Keep as-is to avoid plan changes.
+      return session;
+    }
+
+    return session;
   };
 
-  const updateEasyDistance = (delta: number) => {
-    const newDist = Math.max(1, Math.round((currentSession.distance + delta) * 10) / 10);
-    const updated = { 
-      ...currentSession, 
-      distance: newDist,
-      duration: Math.round(newDist * 5.5) // Approximate 5:30 pace for duration calc
-    };
-    setCurrentSession(updated);
-    onUpdateSession(updated);
+  const pushUpdate = (next: WorkoutSession) => {
+    setCurrentSession(next);
+    onUpdateSession(next);
   };
 
-  const handleVariantSelect = (variant: WorkoutSession) => {
-    const updated = { ...variant, variants: currentSession.variants };
-    setCurrentSession(updated);
-    onUpdateSession(updated);
+  // ---------- Interval editor ----------
+  const updateInterval = (index: number, field: 'distance' | 'count' | 'rest', value: any) => {
+    setCurrentSession((prev) => {
+      const prevIntervals = prev.intervals || [];
+      const nextIntervals = [...prevIntervals];
+
+      const current = nextIntervals[index] || { distance: 1000, count: 10, rest: '60s', pace: '', description: '' };
+
+      const updated = {
+        ...current,
+        [field]: field === 'distance' || field === 'count' ? Number(value) : value,
+      };
+
+      // Clamp reps based on distance band (keeps within your requested constraints)
+      if (field === 'distance') {
+        const d = Number(updated.distance);
+
+        // default rep ranges, consistent with your earlier rules
+        if (d <= 1000) updated.count = clamp(Number(updated.count) || 10, 8, 20);
+        else if (d === 2000) updated.count = clamp(Number(updated.count) || 5, 4, 6);
+        else if (d >= 3000) updated.count = clamp(Number(updated.count) || 3, 2, 4);
+      }
+
+      if (field === 'count') {
+        const d = Number(updated.distance);
+        if (d <= 1000) updated.count = clamp(Number(updated.count) || 10, 8, 20);
+        else if (d === 2000) updated.count = clamp(Number(updated.count) || 5, 4, 6);
+        else if (d >= 3000) updated.count = clamp(Number(updated.count) || 3, 2, 4);
+      }
+
+      // Recalculate pace when distance changes (the key missing piece)
+      if (field === 'distance') {
+        const paceData = getIntervalPaceRange(profile, Number(updated.distance));
+        updated.pace = paceData.range;
+        updated.description = paceData.effort;
+      }
+
+      nextIntervals[index] = updated;
+
+      const nextSession: WorkoutSession = recalcDerived({
+        ...prev,
+        intervals: nextIntervals,
+      });
+
+      onUpdateSession(nextSession);
+      return nextSession;
+    });
   };
 
+  // ---------- Easy editor ----------
+  const updateEasyDistance = (distance: number) => {
+    const next = recalcDerived({ ...currentSession, distance: Math.max(0, distance) });
+    pushUpdate(next);
+  };
+
+  // ---------- Long run variant selector ----------
+  const variants = (currentSession as any).variants as WorkoutSession[] | undefined;
+  const hasVariants = Array.isArray(variants) && variants.length > 0;
+
+  const selectedVariantId = useMemo(() => {
+    if (!hasVariants) return currentSession.id;
+    const match = variants!.find(v => v.id === currentSession.id);
+    return match ? currentSession.id : variants![0].id;
+  }, [currentSession.id, hasVariants, variants]);
+
+  const selectLongRunVariant = (variantId: string) => {
+    if (!hasVariants) return;
+    const v = variants!.find(x => x.id === variantId);
+    if (!v) return;
+    // Keep sync metadata if present, but otherwise replace session content with selected variant.
+    const next: WorkoutSession = {
+      ...v,
+      // preserve any sync fields that may exist on the session object
+      ...(currentSession as any).icuEventId ? { ...(currentSession as any) } : {},
+    } as any;
+    pushUpdate(next);
+  };
+
+  // ---------- Header pace display (optional, but helps confirm profile is wired) ----------
+  const thresholdPace = useMemo(() => {
+    const p = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
+    return p > 0 ? secondsToTime(p) : '0:00';
+  }, [profile]);
+
+  const marathonPace = useMemo(() => {
+    const mp = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+    return mp > 0 ? secondsToTime(mp) : '0:00';
+  }, [profile]);
+
+  // ---------- UI ----------
   return (
-    <div className={`relative p-6 rounded-xl border border-slate-100 bg-white mb-6 transition-all hover:shadow-sm ${isSubT ? 'border-l-4 border-l-norway-red' : 'border-l-4 border-l-slate-200'}`}>
-      <div className="flex justify-between items-start mb-6">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <Activity size={18} className={`${isSubT ? 'text-norway-red' : 'text-slate-400'}`} />
-            <h3 className="font-bold text-slate-900 text-lg leading-tight">{currentSession.title}</h3>
-            {isSynced && <span className="text-[8px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Synced</span>}
-          </div>
-          <p className="text-xs text-slate-400 font-medium">{currentSession.type} Session</p>
-        </div>
-        <div className="text-right flex flex-col items-end">
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col">
           <div className="flex items-center gap-2">
-            {isEasy && (
-              <div className="flex items-center bg-slate-50 rounded-lg p-1 mr-2 border border-slate-100">
-                <button onClick={() => updateEasyDistance(-0.5)} className="p-1 hover:bg-white rounded text-slate-400 hover:text-norway-red transition-colors"><Minus size={12}/></button>
-                <span className="text-[10px] font-bold px-2 text-slate-600 w-8 text-center">{currentSession.distance}</span>
-                <button onClick={() => updateEasyDistance(0.5)} className="p-1 hover:bg-white rounded text-slate-400 hover:text-norway-red transition-colors"><Plus size={12}/></button>
-              </div>
+            <h3 className="text-sm font-extrabold text-slate-900">{currentSession.title}</h3>
+            {isSynced ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Synced
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+                Not synced
+              </span>
             )}
-            <div className="text-sm font-bold text-slate-900">{currentSession.distance}km</div>
           </div>
-          <div className="text-[10px] text-slate-400 font-mono">~{currentSession.duration}m</div>
+
+          <div className="text-xs text-slate-600 mt-1">
+            <span className="font-bold">Distance:</span> {currentSession.distance} km
+            {typeof currentSession.duration === 'number' ? (
+              <>
+                <span className="mx-2">·</span>
+                <span className="font-bold">Est:</span> {currentSession.duration} min
+              </>
+            ) : null}
+          </div>
+
+          <div className="text-[11px] text-slate-500 mt-1">
+            Threshold: <span className="font-bold text-slate-700">{thresholdPace}/km</span>
+            <span className="mx-2">·</span>
+            MP: <span className="font-bold text-slate-700">{marathonPace}/km</span>
+          </div>
         </div>
+
+        <button
+          onClick={() => onSync(currentSession)}
+          className="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-extrabold hover:bg-slate-800"
+        >
+          Sync
+        </button>
       </div>
 
-      {/* Editor Controls for SubT and Long Run */}
-      <div className="space-y-4">
-        {isLongRun && currentSession.variants && (
-          <div className="flex flex-wrap gap-2 mb-4">
-            {currentSession.variants.map((v) => (
-              <button
-                key={v.id}
-                onClick={() => handleVariantSelect(v)}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase border transition-all ${currentSession.id === v.id ? 'bg-norway-blue text-white border-norway-blue' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200'}`}
-              >
-                {v.title.replace(' Long Run', '')}
-              </button>
-            ))}
-          </div>
-        )}
+      {currentSession.description ? (
+        <div className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          {currentSession.description}
+        </div>
+      ) : null}
 
-        {isSubT && (
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Interval Config</h4>
-              <button onClick={() => setIsEditing(!isEditing)} className="text-slate-400 hover:text-norway-red transition-colors">
-                <Settings2 size={14} />
-              </button>
-            </div>
-            {currentSession.intervals?.map((int, i) => (
-              <div key={i} className="flex flex-col gap-3">
-                <div className="flex items-center gap-4">
-                  <div className="flex-1 flex flex-col gap-1">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase">Reps</span>
-                    <input 
-                      type="number" 
-                      value={int.count} 
-                      onChange={(e) => updateInterval(i, 'count', parseInt(e.target.value) || 1)}
-                      className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-full"
-                    />
-                  </div>
-                  <div className="flex-1 flex flex-col gap-1">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase">Dist (m)</span>
-                    <select 
-                      value={int.distance} 
-                      onChange={(e) => updateInterval(i, 'distance', parseInt(e.target.value))}
-                      className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-full"
-                    >
-                      {[400, 600, 800, 1000, 1200, 1600, 2000, 3000].map(d => <option key={d} value={d}>{d}m</option>)}
-                    </select>
-                  </div>
-                  <div className="flex-1 flex flex-col gap-1">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase">Rest</span>
-                    <select 
-                      value={int.rest} 
-                      onChange={(e) => updateInterval(i, 'rest', e.target.value)}
-                      className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-full"
-                    >
-                      {['30s', '45s', '60s', '90s', '2m'].map(r => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </div>
+      {/* EASY RUN EDITOR */}
+      {isEasy && (
+        <div className="flex items-end justify-between gap-3 border-t border-slate-100 pt-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[9px] text-slate-400 font-bold uppercase">Easy distance (km)</span>
+            <input
+              type="number"
+              value={currentSession.distance}
+              min={0}
+              step={1}
+              onChange={(e) => updateEasyDistance(Number(e.target.value))}
+              className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-28"
+            />
+          </div>
+
+          <div className="text-xs text-slate-600">
+            Pace target in description above.
+          </div>
+        </div>
+      )}
+
+      {/* THRESHOLD / INTERVAL EDITOR */}
+      {isThreshold && (currentSession.intervals?.length || 0) > 0 && (
+        <div className="border-t border-slate-100 pt-3 flex flex-col gap-3">
+          <div className="text-[11px] font-extrabold text-slate-800">Intervals</div>
+
+          {currentSession.intervals!.map((int, i) => (
+            <div key={i} className="grid grid-cols-4 gap-3 items-end">
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] text-slate-400 font-bold uppercase">Distance</span>
+                <select
+                  value={int.distance}
+                  onChange={(e) => updateInterval(i, 'distance', e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-full"
+                >
+                  {[400, 600, 800, 1000, 1200, 1600, 2000, 3000, 5000].map((d) => (
+                    <option key={d} value={d}>{d}m</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] text-slate-400 font-bold uppercase">Reps</span>
+                <input
+                  type="number"
+                  value={int.count}
+                  min={1}
+                  step={1}
+                  onChange={(e) => updateInterval(i, 'count', e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-full"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] text-slate-400 font-bold uppercase">Rest</span>
+                <select
+                  value={int.rest}
+                  onChange={(e) => updateInterval(i, 'rest', e.target.value)}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-full"
+                >
+                  {['30s', '45s', '60s', '90s', '120s', '180s'].map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] text-slate-400 font-bold uppercase">Target pace</span>
+                <div className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-extrabold text-slate-800 w-full">
+                  {int.pace || getIntervalPaceRange(profile, Number(int.distance)).range}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
 
-        <div className="space-y-2">
-          <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Session Details</h4>
-          {currentSession.intervals?.map((int, i) => (
-            <div key={i} className="flex items-center justify-between group">
-              <p className="text-sm text-slate-800 font-bold flex items-center gap-2">
-                <ChevronRight size={14} className="text-norway-red" />
-                {int.count}x {int.distance >= 1000 ? `${int.distance/1000}km` : `${int.distance}m`} @ {int.pace}/km
-              </p>
-              {int.rest !== '0' && <span className="text-[10px] font-mono text-slate-400">Rest: {int.rest}</span>}
+              <div className="col-span-4 text-[11px] text-slate-600">
+                {int.description || getIntervalPaceRange(profile, Number(int.distance)).effort}
+              </div>
             </div>
           ))}
-          {!currentSession.intervals?.length && <p className="text-sm text-slate-600 leading-relaxed">{currentSession.description}</p>}
         </div>
+      )}
 
-        {(currentSession.warmup || currentSession.cooldown) && (
-          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
-            {currentSession.warmup && (
-              <div>
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Warm-up</h4>
-                <p className="text-xs text-slate-500">{currentSession.warmup}</p>
+      {/* LONG RUN VARIANTS */}
+      {isLongRun && hasVariants && (
+        <div className="border-t border-slate-100 pt-3 flex items-end justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[9px] text-slate-400 font-bold uppercase">Long run type</span>
+            <select
+              value={selectedVariantId}
+              onChange={(e) => selectLongRunVariant(e.target.value)}
+              className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold w-60"
+            >
+              {variants!.map(v => (
+                <option key={v.id} value={v.id}>{v.title}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="text-xs text-slate-600">
+            Variant changes update the session details.
+          </div>
+        </div>
+      )}
+
+      {/* WORKOUT DETAILS (interval blocks) */}
+      {(currentSession.intervals?.length || 0) > 0 && !isEasy && (
+        <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
+          <div className="text-[11px] font-extrabold text-slate-800">Session structure</div>
+          <div className="flex flex-col gap-2">
+            {currentSession.warmup && !isEasy && (
+              <div className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                <span className="font-extrabold">Warmup:</span> {currentSession.warmup}
               </div>
             )}
-            {currentSession.cooldown && (
-              <div>
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cooldown</h4>
-                <p className="text-xs text-slate-500">{currentSession.cooldown}</p>
+
+            {currentSession.intervals!.map((int, idx) => (
+              <div key={idx} className="text-xs text-slate-700 bg-white border border-slate-200 rounded-xl p-2">
+                <div className="font-extrabold">
+                  {int.count} × {int.distance}m
+                  <span className="mx-2 text-slate-400">·</span>
+                  <span className="text-slate-800">{int.pace}</span>
+                  <span className="mx-2 text-slate-400">·</span>
+                  <span className="text-slate-700">Rest {int.rest}</span>
+                </div>
+                {int.description ? (
+                  <div className="text-[11px] text-slate-600 mt-1">{int.description}</div>
+                ) : null}
+              </div>
+            ))}
+
+            {currentSession.cooldown && !isEasy && (
+              <div className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                <span className="font-extrabold">Cooldown:</span> {currentSession.cooldown}
               </div>
             )}
           </div>
-        )}
-      </div>
-
-      <div className="mt-8 flex items-center justify-between pt-4 border-t border-slate-50">
-        <button
-          onClick={() => onSync(currentSession.id)}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all border ${isSynced ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-900 text-white border-slate-900 hover:bg-black'}`}
-        >
-          {isSynced ? <CheckCircle size={14} /> : <Globe size={14} />}
-          {isSynced ? 'Updated in ICU' : 'Sync to Intervals.icu'}
-        </button>
-        <div className="flex items-center gap-2 text-[10px] font-bold text-slate-300 uppercase">
-           <Clock size={12}/> {currentSession.duration}m
         </div>
-      </div>
+      )}
     </div>
   );
 };

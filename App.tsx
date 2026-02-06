@@ -160,7 +160,8 @@ const App: React.FC = () => {
     }
   };
 
-  const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime);
+  // Logic updated to pass profile for new threshold pacing
+  const currentThreshold = calculateThresholdPace(profile);
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-slate-900 font-sans pb-20">

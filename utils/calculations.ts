@@ -13,58 +13,200 @@ export const secondsToTime = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.round(seconds % 60);
-  
+
   const mStr = m < 10 && h > 0 ? `0${m}` : `${m}`;
   const sStr = s < 10 ? `0${s}` : `${s}`;
-  
+
   if (h > 0) return `${h}:${mStr}:${sStr}`;
   return `${mStr}:${sStr}`;
 };
 
 export const predictRaceTime = (raceDistMeters: number, raceTimeStr: string, targetDistMeters: number): number => {
   const tInput = timeToSeconds(raceTimeStr);
-  if (tInput === 0 || raceDistMeters === 0) return 0;
+  if (tInput === 0 || raceDistMeters === 0 || targetDistMeters === 0) return 0;
   const fatigueFactor = 1.06;
   return tInput * Math.pow(targetDistMeters / raceDistMeters, fatigueFactor);
 };
 
-export const calculatePaceForDistance = (raceDistMeters: number, raceTimeStr: string, targetDistMeters: number): number => {
-    const predictedSeconds = predictRaceTime(raceDistMeters, raceTimeStr, targetDistMeters);
-    if (predictedSeconds === 0) return 0;
-    return predictedSeconds / (targetDistMeters / 1000);
-}
+export const calculatePaceForDistance = (
+  raceDistMeters: number,
+  raceTimeStr: string,
+  targetDistMeters: number
+): number => {
+  const predictedSeconds = predictRaceTime(raceDistMeters, raceTimeStr, targetDistMeters);
+  if (predictedSeconds === 0) return 0;
+  return predictedSeconds / (targetDistMeters / 1000);
+};
 
-export const getIntervalPaceRange = (profile: UserProfile, distanceMeters: number): { range: string, effort: string } => {
-  let targetDist = 21097;
-  let effortLabel = "Half Marathon";
+/**
+ * A1. Estimate 60-minute threshold pace (sec/km) by finding the distance where
+ * the Riegel predictor returns ~3600 seconds, then converting to pace.
+ */
+const estimate60MinThresholdFromSingleResult = (raceDistMeters: number, raceTimeStr: string): number => {
+  const tInput = timeToSeconds(raceTimeStr);
+  if (tInput === 0 || raceDistMeters === 0) return 0;
 
-  if (distanceMeters <= 600) { targetDist = 10000; effortLabel = "10K"; }
-  else if (distanceMeters <= 1000) { targetDist = 15000; effortLabel = "15K"; }
-  else if (distanceMeters <= 2500) { targetDist = 21097; effortLabel = "Half Marathon"; }
-  else if (distanceMeters <= 3500) { targetDist = 30000; effortLabel = "30K"; }
-  else { targetDist = 42195; effortLabel = "Marathon"; }
+  const targetTimeSec = 3600;
 
-  const paceSec = calculatePaceForDistance(profile.raceDistance, profile.raceTime, targetDist);
+  // Wider bounds to avoid clamping for faster runners.
+  let low = 6000;
+  let high = 30000;
+
+  // If the race result itself is near 60 minutes, use its pace.
+  if (Math.abs(tInput - targetTimeSec) <= 30) {
+    return tInput / (raceDistMeters / 1000);
+  }
+
+  for (let i = 0; i < 30; i++) {
+    const mid = (low + high) / 2;
+    const tMid = predictRaceTime(raceDistMeters, raceTimeStr, mid);
+    if (tMid === 0) break;
+
+    // If predicted time is above 60 minutes, distance is too long. Reduce it.
+    if (tMid > targetTimeSec) high = mid;
+    else low = mid;
+  }
+
+  const distAt60 = (low + high) / 2;
+  if (!isFinite(distAt60) || distAt60 <= 0) return 0;
+
+  return targetTimeSec / (distAt60 / 1000);
+};
+
+/**
+ * C3. Optional Critical Speed from two race results if the optional fields exist.
+ * Uses the linear distance-time model: CS = (d2 - d1) / (t2 - t1).
+ * Converts CS to a conservative 60-minute threshold pace (sec/km).
+ */
+const estimate60MinThresholdFromCriticalSpeed = (profile: any): number => {
+  const d1 = Number(profile?.raceDistance);
+  const t1 = timeToSeconds(String(profile?.raceTime || ""));
+  const d2 = Number(profile?.raceDistance2);
+  const t2 = timeToSeconds(String(profile?.raceTime2 || ""));
+
+  if (!isFinite(d1) || !isFinite(d2) || d1 <= 0 || d2 <= 0) return 0;
+  if (!isFinite(t1) || !isFinite(t2) || t1 <= 0 || t2 <= 0) return 0;
+
+  // Need t2 > t1 and d2 > d1 for a valid 2-point model.
+  if (t2 <= t1 || d2 <= d1) return 0;
+
+  const cs = (d2 - d1) / (t2 - t1); // m/s
+  if (!isFinite(cs) || cs <= 0) return 0;
+
+  const paceCS = 1000 / cs; // sec/km
+
+  // Slightly conservative factor.
+  return paceCS * 1.01;
+};
+
+const get60MinThresholdPace = (profile: UserProfile | any): number => {
+  const csPace = estimate60MinThresholdFromCriticalSpeed(profile);
+  if (csPace > 0) return csPace;
+  return estimate60MinThresholdFromSingleResult(profile.raceDistance, profile.raceTime);
+};
+
+/**
+ * B. Norwegian Singles style pacing offsets from the 60-minute threshold anchor.
+ * The goal here is to produce distinct paces across 400-5000m, similar to NSA tables.
+ *
+ * Key behaviour:
+ * - 400-600m are slightly faster than 1k.
+ * - 800-1200m sit around threshold to a touch slower.
+ * - 1600-2000m are a bit slower.
+ * - 3000m is slower again.
+ * - 5000m aligns to Marathon Pace.
+ *
+ * Returns a target pace (sec/km) and an effort label.
+ */
+const getSinglesTargetPace = (
+  profile: UserProfile,
+  repDistanceMeters: number,
+  threshold60PaceSec: number
+): { paceSec: number; effort: string } => {
+  if (!threshold60PaceSec || threshold60PaceSec <= 0) {
+    return { paceSec: 0, effort: "NSA Singles" };
+  }
+
+  // Marathon pace used for 5k reps option.
+  const mpSec = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+
+  // Deterministic offsets in sec/km relative to 60-min threshold.
+  // Negative means slightly faster than threshold. Positive means slower.
+  // These are tuned to avoid the "same pace for different distances" issue.
+  let offset = 0;
+  let effort = "NSA Singles";
+
+  if (repDistanceMeters <= 450) {
+    offset = -7;
+    effort = "NSA Singles. Short";
+  } else if (repDistanceMeters <= 650) {
+    offset = -5;
+    effort = "NSA Singles. Short";
+  } else if (repDistanceMeters <= 900) {
+    offset = -2;
+    effort = "NSA Singles. Short";
+  } else if (repDistanceMeters <= 1100) {
+    offset = +3;
+    effort = "NSA Singles. Short";
+  } else if (repDistanceMeters <= 1300) {
+    offset = +5;
+    effort = "NSA Singles. Short";
+  } else if (repDistanceMeters <= 1700) {
+    offset = +7;
+    effort = "NSA Singles. Medium";
+  } else if (repDistanceMeters <= 2300) {
+    offset = +10;
+    effort = "NSA Singles. Medium";
+  } else if (repDistanceMeters <= 3500) {
+    offset = +15;
+    effort = "NSA Singles. Long";
+  } else {
+    // 4000-5000m. Use Marathon Pace if available, otherwise fall back to a slower offset.
+    if (mpSec > 0) {
+      return { paceSec: mpSec, effort: "Marathon Pace" };
+    }
+    offset = +22;
+    effort = "NSA Singles. Long";
+  }
+
+  const paceSec = threshold60PaceSec + offset;
+  return { paceSec, effort };
+};
+
+export const getIntervalPaceRange = (profile: UserProfile, distanceMeters: number): { range: string; effort: string } => {
+  const threshold60 = get60MinThresholdPace(profile);
+  const { paceSec, effort } = getSinglesTargetPace(profile, distanceMeters, threshold60);
+
+  if (!paceSec) return { range: "0:00-0:00", effort };
+
+  // NSA style tight band. This also makes 400m vs 1k visibly different.
+  const rangeSeconds = 10;
+
   return {
-    range: `${secondsToTime(paceSec)}-${secondsToTime(paceSec + 10)}`,
-    effort: effortLabel
+    range: `${secondsToTime(paceSec)}-${secondsToTime(paceSec + rangeSeconds)}`,
+    effort
   };
 };
 
-export const calculateThresholdPace = (raceDistMeters: number, raceTimeStr: string): number => {
-  return calculatePaceForDistance(raceDistMeters, raceTimeStr, 21097);
+/**
+ * Keeps the same exported name. Internals now return 60-minute threshold pace (sec/km).
+ * Accepts an optional profile to enable C3 without changing types or UI.
+ */
+export const calculateThresholdPace = (raceDistMeters: number, raceTimeStr: string, profile?: UserProfile | any): number => {
+  if (profile) return get60MinThresholdPace(profile);
+  return estimate60MinThresholdFromSingleResult(raceDistMeters, raceTimeStr);
 };
 
 export const generatePlan = (profile: UserProfile): WeeklyPlan => {
-  const tPace = calculateThresholdPace(profile.raceDistance, profile.raceTime);
-  const easyPace = tPace * 1.25; 
+  const tPace = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
+  const easyPace = tPace * 1.25;
   const targetVolume = profile.weeklyVolume;
   const wu = profile.warmupDist;
   const cd = profile.cooldownDist;
 
   const lrDist = Math.max(12, Math.round(targetVolume * 0.25));
   const thresholdCount = Object.values(profile.schedule).filter(t => t === DayType.THRESHOLD).length;
-  
+
   const defaultWorkDist = 10;
   const estThresholdSessionVol = wu + cd + defaultWorkDist;
   const totalFixedVol = (thresholdCount * estThresholdSessionVol) + lrDist;
@@ -73,27 +215,27 @@ export const generatePlan = (profile: UserProfile): WeeklyPlan => {
   const easyDist = easyDaysCount > 0 ? Math.round(remainingVol / easyDaysCount) : 0;
 
   const createThresholdSession = (id: string, dayName: string): WorkoutSession => {
-      let dist = 1000;
-      let reps = 10;
-      if (dayName === 'Thursday') { dist = 2000; reps = 5; }
-      if (dayName === 'Sunday') { dist = 3000; reps = 3; }
+    let dist = 1000;
+    let reps = 10;
+    if (dayName === 'Thursday') { dist = 2000; reps = 5; }
+    if (dayName === 'Sunday') { dist = 3000; reps = 3; }
 
-      const paceData = getIntervalPaceRange(profile, dist);
-      const sessionDist = wu + cd + (reps * dist / 1000);
-      
-      return {
-          id: id,
-          title: `SubT Run`,
-          type: WorkoutType.THRESHOLD,
-          distance: Math.round(sessionDist * 10) / 10,
-          duration: Math.round(sessionDist * (tPace / 60) * 1.05),
-          description: `Strictly controlled sub-threshold. Stay below lactate turnpoint.`,
-          intervals: [{ 
-              distance: dist, count: reps, pace: paceData.range, rest: '60s', description: paceData.effort
-          }],
-          warmup: `${wu}km easy pace`,
-          cooldown: `${cd}km easy pace`
-      };
+    const paceData = getIntervalPaceRange(profile, dist);
+    const sessionDist = wu + cd + (reps * dist / 1000);
+
+    return {
+      id: id,
+      title: `SubT Run`,
+      type: WorkoutType.THRESHOLD,
+      distance: Math.round(sessionDist * 10) / 10,
+      duration: Math.round(sessionDist * (tPace / 60) * 1.05),
+      description: `Strictly controlled sub-threshold. Stay below lactate turnpoint.`,
+      intervals: [{
+        distance: dist, count: reps, pace: paceData.range, rest: '60s', description: paceData.effort
+      }],
+      warmup: `${wu}km easy pace`,
+      cooldown: `${cd}km easy pace`
+    };
   };
 
   const createLongRun = (id: string): WorkoutSession => {
@@ -130,7 +272,7 @@ export const generatePlan = (profile: UserProfile): WeeklyPlan => {
         title: `3x5km MP Long Run`,
         type: WorkoutType.LONG_RUN,
         distance: Math.round((wu + cd + 15) * 10) / 10,
-        duration: Math.round(15 * (mpSec / 60) + (wu+cd)*5),
+        duration: Math.round(15 * (mpSec / 60) + (wu + cd) * 5),
         description: `High specificity. 3 blocks of 5km at Marathon Pace.`,
         intervals: [{ distance: 5000, count: 3, pace: secondsToTime(mpSec), rest: '1km float', description: 'Marathon Pace' }],
         warmup: `${wu}km Easy`, cooldown: `${cd}km Easy`
