@@ -21,6 +21,38 @@ export const secondsToTime = (seconds: number): string => {
   return `${mStr}:${sStr}`;
 };
 
+export const getWeatherPaceDeltaSeconds = (
+  basePaceSec: number,
+  temperatureC: number,
+  humidityPct: number,
+  windKmh: number
+): number => {
+  if (!isFinite(basePaceSec) || basePaceSec <= 0) return 0;
+
+  let delta = 0;
+
+  // Baseline comfort window around 10-12C.
+  if (temperatureC > 12) delta += (temperatureC - 12) * 0.5;
+  if (temperatureC < 5) delta += (5 - temperatureC) * 0.25;
+
+  // Humidity hurts mostly in warm conditions.
+  if (temperatureC >= 18 && humidityPct > 60) {
+    delta += ((humidityPct - 60) / 10) * 0.6;
+  }
+
+  // Generic wind drag penalty beyond light breeze.
+  if (windKmh > 12) delta += (windKmh - 12) * 0.12;
+
+  // Keep adjustments within a practical range for training pacing.
+  const bounded = Math.max(-5, Math.min(20, delta));
+  return Math.round(bounded);
+};
+
+export const applyPaceCorrection = (paceSec: number, deltaSec: number): number => {
+  if (!isFinite(paceSec) || paceSec <= 0) return 0;
+  return Math.max(1, paceSec + deltaSec);
+};
+
 export const predictRaceTime = (raceDistMeters: number, raceTimeStr: string, targetDistMeters: number): number => {
   const tInput = timeToSeconds(raceTimeStr);
   if (tInput === 0 || raceDistMeters === 0 || targetDistMeters === 0) return 0;
@@ -121,7 +153,8 @@ const get60MinThresholdPace = (profile: UserProfile | any): number => {
 const getSinglesTargetPace = (
   profile: UserProfile,
   repDistanceMeters: number,
-  threshold60PaceSec: number
+  threshold60PaceSec: number,
+  correctionSec = 0
 ): { paceSec: number; effort: string } => {
   if (!threshold60PaceSec || threshold60PaceSec <= 0) {
     return { paceSec: 0, effort: "NSA Singles" };
@@ -163,19 +196,19 @@ const getSinglesTargetPace = (
   } else {
     // 4000-5000m. Use Marathon Pace if available, otherwise fall back to a slower offset.
     if (mpSec > 0) {
-      return { paceSec: mpSec, effort: "Marathon Pace" };
+      return { paceSec: applyPaceCorrection(mpSec, correctionSec), effort: "Marathon Pace" };
     }
     offset = +22;
     effort = "NSA Singles. Long";
   }
 
-  const paceSec = threshold60PaceSec + offset;
+  const paceSec = applyPaceCorrection(threshold60PaceSec + offset, correctionSec);
   return { paceSec, effort };
 };
 
-export const getIntervalPaceRange = (profile: UserProfile, distanceMeters: number): { range: string; effort: string } => {
+export const getIntervalPaceRange = (profile: UserProfile, distanceMeters: number, correctionSec = 0): { range: string; effort: string } => {
   const threshold60 = get60MinThresholdPace(profile);
-  const { paceSec, effort } = getSinglesTargetPace(profile, distanceMeters, threshold60);
+  const { paceSec, effort } = getSinglesTargetPace(profile, distanceMeters, threshold60, correctionSec);
 
   if (!paceSec) return { range: "0:00-0:00", effort };
 
@@ -197,8 +230,8 @@ export const calculateThresholdPace = (raceDistMeters: number, raceTimeStr: stri
   return estimate60MinThresholdFromSingleResult(raceDistMeters, raceTimeStr);
 };
 
-export const generatePlan = (profile: UserProfile): WeeklyPlan => {
-  const tPace = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
+export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPlan => {
+  const tPace = applyPaceCorrection(calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any), correctionSec);
   const easyPace = tPace * 1.25;
   const targetVolume = profile.weeklyVolume;
   const wu = profile.warmupDist;
@@ -220,7 +253,7 @@ export const generatePlan = (profile: UserProfile): WeeklyPlan => {
     if (dayName === 'Thursday') { dist = 2000; reps = 5; }
     if (dayName === 'Sunday') { dist = 3000; reps = 3; }
 
-    const paceData = getIntervalPaceRange(profile, dist);
+    const paceData = getIntervalPaceRange(profile, dist, correctionSec);
     const sessionDist = wu + cd + (reps * dist / 1000);
 
     return {
@@ -239,7 +272,7 @@ export const generatePlan = (profile: UserProfile): WeeklyPlan => {
   };
 
   const createLongRun = (id: string): WorkoutSession => {
-    const mpSec = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+    const mpSec = applyPaceCorrection(calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195), correctionSec);
     const steadyPaceSec = (easyPace + mpSec) / 2;
 
     const variants: WorkoutSession[] = [

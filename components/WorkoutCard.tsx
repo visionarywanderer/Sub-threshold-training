@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
-import { getIntervalPaceRange, secondsToTime, calculateThresholdPace, calculatePaceForDistance } from '../utils/calculations';
+import { applyPaceCorrection, getIntervalPaceRange, secondsToTime, calculateThresholdPace, calculatePaceForDistance } from '../utils/calculations';
 
 interface WorkoutCardProps {
   session: WorkoutSession;
   profile: UserProfile;
+  paceCorrectionSec?: number;
   onUpdateSession: (session: WorkoutSession) => void;
   onSync: (session: WorkoutSession) => void;
   isSynced?: boolean;
@@ -13,6 +14,7 @@ interface WorkoutCardProps {
 const WorkoutCard: React.FC<WorkoutCardProps> = ({
   session: initialSession,
   profile,
+  paceCorrectionSec = 0,
   onUpdateSession,
   onSync,
   isSynced,
@@ -47,7 +49,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       // Update interval pace strings based on current interval distance
       const newIntervals = (session.intervals || []).map((int) => {
         const dist = Number(int.distance) || 0;
-        const paceData = getIntervalPaceRange(profile, dist);
+        const paceData = getIntervalPaceRange(profile, dist, paceCorrectionSec);
         return {
           ...int,
           distance: dist,
@@ -107,7 +109,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
 
       // Recalculate pace when distance changes (the key missing piece)
       if (field === 'distance') {
-        const paceData = getIntervalPaceRange(profile, Number(updated.distance));
+        const paceData = getIntervalPaceRange(profile, Number(updated.distance), paceCorrectionSec);
         updated.pace = paceData.range;
         updated.description = paceData.effort;
       }
@@ -144,25 +146,25 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     if (!hasVariants) return;
     const v = variants!.find(x => x.id === variantId);
     if (!v) return;
-    // Keep sync metadata if present, but otherwise replace session content with selected variant.
+    // Replace content with selected variant while preserving variant options and sync id.
     const next: WorkoutSession = {
       ...v,
-      // preserve any sync fields that may exist on the session object
-      ...(currentSession as any).icuEventId ? { ...(currentSession as any) } : {},
-    } as any;
+      variants,
+      icuEventId: currentSession.icuEventId,
+    };
     pushUpdate(next);
   };
 
   // ---------- Header pace display (optional, but helps confirm profile is wired) ----------
   const thresholdPace = useMemo(() => {
-    const p = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
+    const p = applyPaceCorrection(calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any), paceCorrectionSec);
     return p > 0 ? secondsToTime(p) : '0:00';
-  }, [profile]);
+  }, [profile, paceCorrectionSec]);
 
   const marathonPace = useMemo(() => {
-    const mp = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+    const mp = applyPaceCorrection(calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195), paceCorrectionSec);
     return mp > 0 ? secondsToTime(mp) : '0:00';
-  }, [profile]);
+  }, [profile, paceCorrectionSec]);
 
   // ---------- UI ----------
   return (
@@ -196,6 +198,9 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
             Threshold: <span className="font-bold text-slate-700">{thresholdPace}/km</span>
             <span className="mx-2">·</span>
             MP: <span className="font-bold text-slate-700">{marathonPace}/km</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1">
+            Weather Delta: <span className="font-bold text-slate-700">{paceCorrectionSec >= 0 ? '+' : ''}{paceCorrectionSec}s/km</span>
           </div>
         </div>
 
@@ -282,12 +287,12 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] text-slate-400 font-bold uppercase">Target pace</span>
                 <div className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-extrabold text-slate-800 w-full">
-                  {int.pace || getIntervalPaceRange(profile, Number(int.distance)).range}
+                  {getIntervalPaceRange(profile, Number(int.distance), paceCorrectionSec).range}
                 </div>
               </div>
 
               <div className="col-span-4 text-[11px] text-slate-600">
-                {int.description || getIntervalPaceRange(profile, Number(int.distance)).effort}
+                {int.description || getIntervalPaceRange(profile, Number(int.distance), paceCorrectionSec).effort}
               </div>
             </div>
           ))}
@@ -332,7 +337,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                 <div className="font-extrabold">
                   {int.count} × {int.distance}m
                   <span className="mx-2 text-slate-400">·</span>
-                  <span className="text-slate-800">{int.pace}</span>
+                  <span className="text-slate-800">{getIntervalPaceRange(profile, Number(int.distance), paceCorrectionSec).range}</span>
                   <span className="mx-2 text-slate-400">·</span>
                   <span className="text-slate-700">Rest {int.rest}</span>
                 </div>

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig } from './types';
-import { generatePlan, calculateThresholdPace, secondsToTime } from './utils/calculations';
+import { applyPaceCorrection, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
 import { syncWorkoutToIcu } from './services/intervalsService';
 import WorkoutCard from './components/WorkoutCard';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
-import { ChevronUp, ChevronDown, MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw } from 'lucide-react';
+import { ChevronUp, ChevronDown, MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -40,6 +40,13 @@ const normalizeTo5kProfile = (profile: UserProfile): UserProfile => ({
   raceDistance: FIVE_K_DISTANCE,
 });
 
+interface WeatherSnapshot {
+  temperatureC: number;
+  dewPointC: number;
+  humidityPct: number;
+  windKmh: number;
+}
+
 const App: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_RUN_PROFILE);
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
@@ -48,6 +55,8 @@ const App: React.FC = () => {
   const [intervalsConfig, setIntervalsConfig] = useState<IntervalsIcuConfig>({ athleteId: '', apiKey: '', connected: false });
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
+  const [weatherStatus, setWeatherStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'blocked'>('idle');
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + (1 - d.getDay() + 7) % 7); // Next Monday
@@ -64,11 +73,50 @@ const App: React.FC = () => {
       const parsed = normalizeTo5kProfile(JSON.parse(savedProfile));
       setProfile(parsed);
       setIsAuthenticated(!!parsed.uid);
-      setPlan(generatePlan(parsed));
+      setPlan(generatePlan(parsed, 0));
     } else {
-      setPlan(generatePlan(DEFAULT_RUN_PROFILE));
+      setPlan(generatePlan(DEFAULT_RUN_PROFILE, 0));
     }
   }, []);
+
+  const fetchWeather = useCallback(() => {
+    if (!navigator.geolocation) {
+      setWeatherStatus('blocked');
+      return;
+    }
+
+    setWeatherStatus('loading');
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m&timezone=auto&forecast_days=1`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('weather_fetch_failed');
+          const data = await res.json();
+          const current = data?.current;
+          const temperatureC = Number(current?.temperature_2m);
+          const dewPointC = Number(current?.dew_point_2m);
+          const humidityPct = Number(current?.relative_humidity_2m);
+          const windKmh = Number(current?.wind_speed_10m);
+
+          if (![temperatureC, dewPointC, humidityPct, windKmh].every(v => isFinite(v))) throw new Error('weather_parse_failed');
+
+          setWeather({ temperatureC, dewPointC, humidityPct, windKmh });
+          setWeatherStatus('ready');
+        } catch (e) {
+          setWeatherStatus('error');
+        }
+      },
+      () => setWeatherStatus('blocked'),
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 15 * 60 * 1000 }
+    );
+  }, []);
+
+  useEffect(() => {
+    fetchWeather();
+  }, [fetchWeather]);
 
   const handleCredentialResponse = useCallback((response: any) => {
     const userData = JSON.parse(atob(response.credential.split('.')[1]));
@@ -76,7 +124,7 @@ const App: React.FC = () => {
       setProfile(prev => {
         const newProfile = normalizeTo5kProfile({ ...prev, uid: userData.sub, email: userData.email, name: userData.name });
         localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(newProfile));
-        setPlan(generatePlan(newProfile));
+        setPlan(generatePlan(newProfile, 0));
         return newProfile;
       });
       setIsAuthenticated(true);
@@ -119,9 +167,15 @@ const App: React.FC = () => {
     if (window.google) window.google.accounts.id.disableAutoSelect();
   };
 
+  const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile);
+  const weatherPaceDeltaSec = weather
+    ? getWeatherPaceDeltaSeconds(currentThreshold, weather.temperatureC, weather.humidityPct, weather.windKmh)
+    : 0;
+  const correctedThreshold = applyPaceCorrection(currentThreshold, weatherPaceDeltaSec);
+
   const handleGeneratePlan = () => {
     const normalized = normalizeTo5kProfile(profile);
-    const newPlan = generatePlan(normalized);
+    const newPlan = generatePlan(normalized, weatherPaceDeltaSec);
     setProfile(normalized);
     setPlan(newPlan);
     setActiveTab('plan');
@@ -176,9 +230,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Logic updated to pass profile for new threshold pacing
-  const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile);
-
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-slate-900 font-sans pb-20">
       <header className="bg-white border-b border-slate-100 sticky top-0 z-40">
@@ -203,23 +254,24 @@ const App: React.FC = () => {
                </div>
              ) : GOOGLE_CLIENT_ID ? (
                <div id="google-login-btn"></div>
-             ) : (
-               <span className="text-xs text-slate-400">Set GOOGLE_CLIENT_ID to enable sign-in</span>
-             )}
+             ) : null}
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-10">
         <section className="mb-12">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 mb-10">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 sm:gap-6 mb-10">
                 <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Benchmark</p>
                     <p className="text-2xl font-bold text-slate-900">{profile.raceTime} (5K)</p>
                 </div>
                 <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">SubT Pace</p>
-                    <p className="text-2xl font-bold text-slate-900">{secondsToTime(currentThreshold)}</p>
+                    <p className="text-2xl font-bold text-slate-900">{secondsToTime(correctedThreshold)}</p>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Base {secondsToTime(currentThreshold)} (Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km)
+                    </p>
                 </div>
                 <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Week Target</p>
@@ -228,6 +280,22 @@ const App: React.FC = () => {
                 <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Plan Volume</p>
                     <p className="text-2xl font-bold text-slate-900">{plan?.totalDistance || 0}km</p>
+                </div>
+                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Weather</p>
+                      <button onClick={fetchWeather} className="text-slate-400 hover:text-slate-700"><RefreshCw size={14} /></button>
+                    </div>
+                    {weather ? (
+                      <>
+                        <p className="text-sm font-bold text-slate-900 flex items-center gap-1"><CloudSun size={14} /> {Math.round(weather.temperatureC)}C</p>
+                        <p className="text-[10px] text-slate-500 mt-1">Humidity: {Math.round(weather.humidityPct)}%</p>
+                        <p className="text-[10px] text-slate-500">Dew point: {Math.round(weather.dewPointC)}C</p>
+                        <p className="text-[10px] text-slate-500">Wind: {Math.round(weather.windKmh)} km/h</p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-400">{weatherStatus === 'loading' ? 'Loading...' : weatherStatus === 'blocked' ? 'Location blocked' : weatherStatus === 'error' ? 'Weather unavailable' : 'No weather data'}</p>
+                    )}
                 </div>
             </div>
             
@@ -282,6 +350,7 @@ const App: React.FC = () => {
                             <WorkoutCard 
                                 session={{...day.session}} 
                                 isSynced={!!day.session.icuEventId}
+                                paceCorrectionSec={weatherPaceDeltaSec}
                                 onSync={async (id) => {
                                     if(!intervalsConfig.connected) {
                                         setShowIntervalsModal(true);
@@ -315,7 +384,7 @@ const App: React.FC = () => {
 
             {activeTab === 'pacing' && (
                <div className="animate-in fade-in slide-in-from-bottom-2">
-                 <PacingTable profile={profile} />
+                 <PacingTable profile={profile} paceCorrectionSec={weatherPaceDeltaSec} />
                </div>
             )}
 
