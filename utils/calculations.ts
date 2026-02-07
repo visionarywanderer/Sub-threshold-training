@@ -70,6 +70,36 @@ export const calculatePaceForDistance = (
   return predictedSeconds / (targetDistMeters / 1000);
 };
 
+const getRaceEquivalentPaces = (profile: UserProfile) => {
+  const p15k = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 15000);
+  const pHalf = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 21097);
+  const p30k = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 30000);
+  const pMarathon = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+  return { p15k, pHalf, p30k, pMarathon };
+};
+
+export const getEasyRunPaceRange = (profile: UserProfile, correctionSec = 0): { low: number; high: number; center: number } => {
+  const { pMarathon } = getRaceEquivalentPaces(profile);
+
+  // Calibrated from user anchor:
+  // 5K 19:07 -> MP ~4:21/km, easy should be ~5:35-6:05/km.
+  // So easy range = MP + 74..104 sec/km.
+  let low = pMarathon > 0 ? pMarathon + 74 : 0;
+  let high = pMarathon > 0 ? pMarathon + 104 : 0;
+
+  if (low <= 0 || high <= 0) {
+    const threshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
+    low = threshold * 1.32;
+    high = threshold * 1.44;
+  }
+
+  const correctedLow = applyPaceCorrection(low, correctionSec);
+  const correctedHigh = applyPaceCorrection(high, correctionSec);
+  const correctedCenter = (correctedLow + correctedHigh) / 2;
+
+  return { low: correctedLow, high: correctedHigh, center: correctedCenter };
+};
+
 /**
  * A1. Estimate 60-minute threshold pace (sec/km) by finding the distance where
  * the Riegel predictor returns ~3600 seconds, then converting to pace.
@@ -160,50 +190,32 @@ const getSinglesTargetPace = (
     return { paceSec: 0, effort: "NSA Singles" };
   }
 
-  // Marathon pace used for 5k reps option.
-  const mpSec = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+  const { p15k, pHalf, p30k, pMarathon } = getRaceEquivalentPaces(profile);
 
-  // Deterministic offsets in sec/km relative to 60-min threshold.
-  // Negative means slightly faster than threshold. Positive means slower.
-  // These are tuned to avoid the "same pace for different distances" issue.
-  let offset = 0;
-  let effort = "NSA Singles";
+  // Dynamic race-equivalent anchors:
+  // 1k reps -> 15K pace
+  // 2k reps -> Half Marathon pace
+  // 3k reps -> 30K pace
+  // 5k reps -> Marathon pace
+  // Shorter reps (400-1000) stay on the 15K anchor to avoid aggressive targets.
+  let base = threshold60PaceSec;
+  let effort = "Threshold Pace";
 
-  if (repDistanceMeters <= 450) {
-    offset = -7;
-    effort = "NSA Singles. Short";
-  } else if (repDistanceMeters <= 650) {
-    offset = -5;
-    effort = "NSA Singles. Short";
-  } else if (repDistanceMeters <= 900) {
-    offset = -2;
-    effort = "NSA Singles. Short";
-  } else if (repDistanceMeters <= 1100) {
-    offset = +3;
-    effort = "NSA Singles. Short";
-  } else if (repDistanceMeters <= 1300) {
-    offset = +5;
-    effort = "NSA Singles. Short";
-  } else if (repDistanceMeters <= 1700) {
-    offset = +7;
-    effort = "NSA Singles. Medium";
-  } else if (repDistanceMeters <= 2300) {
-    offset = +10;
-    effort = "NSA Singles. Medium";
-  } else if (repDistanceMeters <= 3500) {
-    offset = +15;
-    effort = "NSA Singles. Long";
-  } else {
-    // 4000-5000m. Use Marathon Pace if available, otherwise fall back to a slower offset.
-    if (mpSec > 0) {
-      return { paceSec: applyPaceCorrection(mpSec, correctionSec), effort: "Marathon Pace" };
-    }
-    offset = +22;
-    effort = "NSA Singles. Long";
+  if (repDistanceMeters <= 1000 && p15k > 0) {
+    base = p15k;
+    effort = "15K Pace";
+  } else if (repDistanceMeters <= 2000 && pHalf > 0) {
+    base = pHalf;
+    effort = "Half Marathon Pace";
+  } else if (repDistanceMeters <= 3500 && p30k > 0) {
+    base = p30k;
+    effort = "30K Pace";
+  } else if (pMarathon > 0) {
+    base = pMarathon;
+    effort = "Marathon Pace";
   }
 
-  const paceSec = applyPaceCorrection(threshold60PaceSec + offset, correctionSec);
-  return { paceSec, effort };
+  return { paceSec: applyPaceCorrection(base, correctionSec), effort };
 };
 
 export const getIntervalPaceRange = (profile: UserProfile, distanceMeters: number, correctionSec = 0): { range: string; effort: string } => {
@@ -232,7 +244,8 @@ export const calculateThresholdPace = (raceDistMeters: number, raceTimeStr: stri
 
 export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPlan => {
   const tPace = applyPaceCorrection(calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any), correctionSec);
-  const easyPace = tPace * 1.25;
+  const easyRange = getEasyRunPaceRange(profile, correctionSec);
+  const easyPace = easyRange.center;
   const targetVolume = profile.weeklyVolume;
   const wu = profile.warmupDist;
   const cd = profile.cooldownDist;
@@ -318,7 +331,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   const createEasyRun = (id: string, dist: number): WorkoutSession => ({
     id: id, title: `Easy Run`, type: WorkoutType.EASY, distance: dist,
     duration: Math.round(dist * (easyPace / 60)),
-    description: `Target Pace: ${secondsToTime(easyPace)}-${secondsToTime(easyPace + 30)}/km`,
+    description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
     warmup: 'N/A', cooldown: 'N/A'
   });
 

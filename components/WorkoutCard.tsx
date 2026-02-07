@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { GripVertical, RefreshCw } from 'lucide-react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
-import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, getIntervalPaceRange, secondsToTime } from '../utils/calculations';
+import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, secondsToTime } from '../utils/calculations';
 
 interface WorkoutCardProps {
   session: WorkoutSession;
@@ -72,12 +72,12 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
 
   const recalcDerived = (session: WorkoutSession): WorkoutSession => {
     if (session.type === WorkoutType.EASY) {
-      const tPace = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
-      const easyPace = tPace * 1.25;
+      const easyRange = getEasyRunPaceRange(profile, paceCorrectionSec);
+      const easyPace = easyRange.center;
       return {
         ...session,
         duration: Math.round(session.distance * (easyPace / 60)),
-        description: session.description || `Target Pace: ${secondsToTime(easyPace)}-${secondsToTime(easyPace + 30)}/km`,
+        description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
       };
     }
 
@@ -162,9 +162,8 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       return getIntervalPaceRange(profile, dist, paceCorrectionSec).range;
     }
     if (isEasy) {
-      const tPace = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any);
-      const easyPace = applyPaceCorrection(tPace * 1.25, paceCorrectionSec);
-      return `${secondsToTime(easyPace)}-${secondsToTime(easyPace + 30)}`;
+      const easyRange = getEasyRunPaceRange(profile, paceCorrectionSec);
+      return `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
     }
     const mp = applyPaceCorrection(calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195), paceCorrectionSec);
     return secondsToTime(mp);
