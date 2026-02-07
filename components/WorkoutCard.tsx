@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { GripVertical, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical, RefreshCw } from 'lucide-react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
 import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, secondsToTime } from '../utils/calculations';
 
@@ -30,6 +30,8 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
 }) => {
   const [currentSession, setCurrentSession] = useState<WorkoutSession>(initialSession);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [cardOpen, setCardOpen] = useState(true);
 
   useEffect(() => {
     setCurrentSession(initialSession);
@@ -41,9 +43,50 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncViewport = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      setCardOpen(!mobile);
+    };
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    return () => window.removeEventListener('resize', syncViewport);
+  }, []);
+
   const isEasy = currentSession.type === WorkoutType.EASY;
   const isLongRun = currentSession.type === WorkoutType.LONG_RUN;
   const isThreshold = currentSession.type === WorkoutType.THRESHOLD;
+
+  const parseTimeToSec = (timeStr: string): number => {
+    const cleaned = timeStr.trim();
+    if (!cleaned) return 0;
+    const parts = cleaned.split(':').map((p) => Number(p));
+    if (parts.length === 2 && parts.every((p) => Number.isFinite(p))) {
+      return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3 && parts.every((p) => Number.isFinite(p))) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    return 0;
+  };
+
+  const parsePaceRangeMidSec = (pace: string): number => {
+    if (!pace) return 0;
+    const [low, high] = pace.split('-').map((p) => parseTimeToSec(p));
+    if (low > 0 && high > 0) return (low + high) / 2;
+    if (low > 0) return low;
+    return 0;
+  };
+
+  const parseRestToSec = (rest: string): number => {
+    if (!rest || rest === '0') return 0;
+    const v = rest.trim().toLowerCase();
+    if (v.endsWith('s')) return Number(v.replace('s', '')) || 0;
+    if (v.endsWith('m')) return (Number(v.replace('m', '')) || 0) * 60;
+    return 0;
+  };
 
   const getTone = () => {
     if (dayTypeLabel.includes('Threshold')) {
@@ -87,7 +130,43 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
         const paceData = getIntervalPaceRange(profile, dist, paceCorrectionSec);
         return { ...int, distance: dist, pace: paceData.range, description: paceData.effort };
       });
-      return { ...session, intervals: newIntervals };
+
+      const wuKm = Math.max(0, Number(profile.warmupDist) || 0);
+      const cdKm = Math.max(0, Number(profile.cooldownDist) || 0);
+      const easyCenter = getEasyRunPaceRange(profile, paceCorrectionSec).center;
+
+      const intervalKm = newIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+        return sum + (reps * distKm);
+      }, 0);
+
+      const workSec = newIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+        const repPaceSec = parsePaceRangeMidSec(int.pace || '');
+        return sum + (reps * distKm * repPaceSec);
+      }, 0);
+
+      const restSec = newIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const perRest = parseRestToSec(int.rest || '');
+        const countRests = Math.max(0, reps - 1);
+        return sum + (perRest * countRests);
+      }, 0);
+
+      const wuCdSec = (wuKm + cdKm) * easyCenter;
+      const sessionDistance = Math.round((wuKm + cdKm + intervalKm) * 10) / 10;
+      const sessionDuration = Math.round((workSec + restSec + wuCdSec) / 60);
+
+      return {
+        ...session,
+        intervals: newIntervals,
+        distance: sessionDistance,
+        duration: sessionDuration,
+        warmup: `${wuKm}km easy pace`,
+        cooldown: `${cdKm}km easy pace`,
+      };
     }
 
     return session;
@@ -133,6 +212,19 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     const next = recalcDerived({ ...currentSession, distance: Math.max(0, distance) });
     pushUpdate(next);
   };
+
+  useEffect(() => {
+    if (currentSession.type !== WorkoutType.THRESHOLD) return;
+    const next = recalcDerived(currentSession);
+    const hasChange =
+      next.distance !== currentSession.distance ||
+      next.duration !== currentSession.duration ||
+      next.warmup !== currentSession.warmup ||
+      next.cooldown !== currentSession.cooldown;
+    if (!hasChange) return;
+    setCurrentSession(next);
+    onUpdateSession(next);
+  }, [profile.warmupDist, profile.cooldownDist, paceCorrectionSec]);
 
   const variants = (currentSession as any).variants as WorkoutSession[] | undefined;
   const hasVariants = Array.isArray(variants) && variants.length > 0;
@@ -217,10 +309,20 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
           >
             <GripVertical size={16} />
           </button>
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => setCardOpen((prev) => !prev)}
+              className="p-2 rounded-full border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
+              aria-label={cardOpen ? `Collapse ${dayLabel}` : `Expand ${dayLabel}`}
+            >
+              {cardOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="px-5 py-4">
+      {cardOpen && <div className="px-5 py-4">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3.5 py-3">
             <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">Distance</p>
@@ -263,10 +365,10 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       min={0}
                       step={1}
                       onChange={(e) => updateEasyDistance(Number(e.target.value))}
-                      className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold w-28"
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-28"
                     />
                   </div>
-                  <div className="text-xs text-slate-500">Threshold {thresholdPace}/km</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-300">Threshold {thresholdPace}/km</div>
                 </div>
               )}
 
@@ -279,7 +381,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                         <select
                           value={int.distance}
                           onChange={(e) => updateInterval(i, 'distance', e.target.value)}
-                          className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold"
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
                         >
                           {[400, 600, 800, 1000, 1200, 1600, 2000, 3000, 5000].map((d) => (
                             <option key={d} value={d}>{d}m</option>
@@ -294,7 +396,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                           min={1}
                           step={1}
                           onChange={(e) => updateInterval(i, 'count', e.target.value)}
-                          className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold"
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div className="flex flex-col gap-1">
@@ -302,7 +404,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                         <select
                           value={int.rest}
                           onChange={(e) => updateInterval(i, 'rest', e.target.value)}
-                          className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold"
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
                         >
                           {['30s', '45s', '60s', '90s', '120s', '180s'].map(r => (
                             <option key={r} value={r}>{r}</option>
@@ -311,7 +413,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-semibold uppercase">Target</span>
-                        <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-800">
+                        <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-800 dark:text-slate-100">
                           {getIntervalPaceRange(profile, Number(int.distance), paceCorrectionSec).range}
                         </div>
                       </div>
@@ -327,14 +429,14 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                     <select
                       value={selectedVariantId}
                       onChange={(e) => selectLongRunVariant(e.target.value)}
-                      className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold w-64"
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-64"
                     >
                       {variants!.map(v => (
                         <option key={v.id} value={v.id}>{v.title}</option>
                       ))}
                     </select>
                   </div>
-                  <div className="text-xs text-slate-500">Variant updates session details</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-300">Variant updates session details</div>
                 </div>
               )}
 
@@ -346,7 +448,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                     </div>
                   ) : null}
                   {currentSession.intervals!.map((int, idx) => (
-                    <div key={idx} className="text-xs text-slate-700 bg-white border border-slate-200 rounded-xl p-2.5">
+                    <div key={idx} className="text-xs text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5">
                       <span className="font-semibold">{int.count} × {int.distance}m</span>
                       <span className="mx-2 text-slate-400">·</span>
                       <span>{getIntervalDisplayPace(Number(int.distance), int.pace)}/km</span>
@@ -364,7 +466,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </article>
   );
 };

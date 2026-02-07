@@ -306,7 +306,7 @@ const App: React.FC = () => {
             <div className="w-10 h-6 bg-slate-800 rounded flex items-center justify-center relative shadow-sm">
                <div className="absolute left-0 top-0 bottom-0 w-1/3 bg-norway-red rounded-l"></div>
             </div>
-            <h1 className="font-bold text-xl tracking-tight text-norway-blue">Threshold Works</h1>
+            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">Threshold Works</h1>
           </div>
           
           <div className="flex items-center gap-4">
@@ -338,7 +338,7 @@ const App: React.FC = () => {
         <section className="mb-12">
             <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 shadow-sm px-6 py-6 md:px-8 md:py-7 mb-10">
               <div className="pointer-events-none absolute -top-16 -right-10 w-48 h-48 bg-norway-blue/8 dark:bg-norway-blue/15 rounded-full blur-2xl" />
-              <div className="pointer-events-none absolute -bottom-20 -left-12 w-52 h-52 bg-emerald-400/10 dark:bg-emerald-300/10 rounded-full blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-20 -left-12 w-52 h-52 bg-slate-300/30 dark:bg-slate-500/20 rounded-full blur-2xl" />
 
               <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
@@ -357,9 +357,9 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="lg:text-center rounded-2xl border border-norway-blue/15 dark:border-norway-blue/30 bg-norway-blue/[0.04] dark:bg-norway-blue/[0.12] px-5 py-4">
+                <div className="lg:text-center rounded-2xl border border-norway-blue/15 dark:border-sky-500/30 bg-norway-blue/[0.04] dark:bg-sky-500/[0.12] px-5 py-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Threshold Pace</p>
-                  <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 dark:text-slate-400 font-medium">/km</span></p>
+                  <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue dark:text-sky-300 mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 dark:text-slate-300 font-medium">/km</span></p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                     Base {secondsToTime(currentThreshold)}. Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km
                   </p>
@@ -462,39 +462,39 @@ const App: React.FC = () => {
               <div className="fixed inset-0 bg-white/98 dark:bg-slate-950/98 backdrop-blur-md z-50 overflow-y-auto p-6 sm:p-10 animate-in fade-in duration-300">
                  <div className="max-w-2xl mx-auto space-y-10">
                     <div className="flex justify-between items-center sticky top-0 bg-white/10 dark:bg-slate-950/10 py-4 z-10">
-                        <h2 className="text-3xl font-bold text-norway-blue tracking-tight">Plan Config</h2>
+                        <h2 className="text-3xl font-bold text-norway-blue dark:text-sky-300 tracking-tight">Plan Config</h2>
                         <button onClick={() => setActiveTab('plan')} className="w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-slate-700"><X size={20}/></button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                         <div className="space-y-6">
-                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest border-b pb-2">Running Benchmark</h4>
+                            <h4 className="text-xs font-bold text-slate-400 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-700 pb-2">Running Benchmark</h4>
                             <div>
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Benchmark Distance</label>
-                                <div className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-slate-800">
+                                <div className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-800 dark:text-slate-100">
                                   5K
                                 </div>
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">5K Time (M:S)</label>
-                                <input type="text" value={profile.raceTime} onChange={(e) => setProfile(p => ({...p, raceTime: e.target.value}))} className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" />
+                                <input type="text" value={profile.raceTime} onChange={(e) => setProfile(p => ({...p, raceTime: e.target.value}))} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
                             </div>
                         </div>
 
                         <div className="space-y-6">
-                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest border-b pb-2">Volume Settings</h4>
+                            <h4 className="text-xs font-bold text-slate-400 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-700 pb-2">Volume Settings</h4>
                             <div>
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Weekly Target (km)</label>
-                                <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold" />
+                                <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
                             </div>
                             <div className="flex gap-2">
                                 <div className="w-1/2">
                                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Warmup (km)</label>
-                                  <input type="number" name="warmupDist" value={profile.warmupDist} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-center" />
+                                  <input type="number" name="warmupDist" value={profile.warmupDist} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-center text-slate-900 dark:text-slate-100" />
                                 </div>
                                 <div className="w-1/2">
                                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Cooldown (km)</label>
-                                  <input type="number" name="cooldownDist" value={profile.cooldownDist} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-center" />
+                                  <input type="number" name="cooldownDist" value={profile.cooldownDist} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-center text-slate-900 dark:text-slate-100" />
                                 </div>
                             </div>
                         </div>
@@ -504,14 +504,14 @@ const App: React.FC = () => {
                         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6 ml-1">Training Frequency</label>
                         <div className="grid grid-cols-1 gap-2">
                             {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
-                                <div key={day} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                    <span className="font-bold text-slate-700 text-xs w-20">{day}</span>
+                                <div key={day} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                                    <span className="font-bold text-slate-700 dark:text-slate-200 text-xs w-20">{day}</span>
                                     <div className="flex gap-1 overflow-x-auto scrollbar-hide">
                                         {[DayType.REST, DayType.EASY, DayType.THRESHOLD, DayType.LONG_RUN].map(type => (
                                             <button 
                                               key={type} 
                                               onClick={() => setProfile(p => ({ ...p, schedule: { ...p.schedule, [day]: type } }))}
-                                              className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase whitespace-nowrap border transition-all ${profile.schedule[day] === type ? 'bg-norway-blue text-white' : 'bg-white text-slate-400 border-slate-100'}`}
+                                              className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase whitespace-nowrap border transition-all ${profile.schedule[day] === type ? 'bg-norway-blue dark:bg-sky-500 text-white' : 'bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-300 border-slate-100 dark:border-slate-700'}`}
                                             >
                                                 {type.replace('Threshold', 'SubT')}
                                             </button>
