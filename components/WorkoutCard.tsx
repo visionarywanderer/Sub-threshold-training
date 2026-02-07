@@ -276,6 +276,14 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     return getIntervalPaceRange(profile, Number(distanceMeters), paceCorrectionSec).range;
   };
 
+  const formatDuration = (minutes: number) => {
+    const total = Math.max(0, Math.round(minutes || 0));
+    if (total < 60) return `${total} min`;
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  };
+
   return (
     <article className={`border rounded-2xl shadow-sm hover:shadow-md transition-shadow dark:bg-slate-900/90 dark:border-slate-700 ${tone.shell}`}>
       <div className="px-5 py-4 border-b border-slate-200/80 dark:border-slate-700 flex items-start justify-between gap-4">
@@ -330,7 +338,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
           </div>
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3.5 py-3">
             <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">Est. Time</p>
-            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{currentSession.duration || 0} min</p>
+            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{formatDuration(currentSession.duration || 0)}</p>
           </div>
           <div className={`rounded-xl border px-3.5 py-3 ${tone.pace}`}>
             <p className="text-[10px] uppercase tracking-wide font-semibold">Target Pace</p>
