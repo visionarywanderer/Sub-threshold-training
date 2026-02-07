@@ -21,16 +21,16 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
 
   const normalizeEasyStep = (raw: string): string => {
     const value = (raw || '').trim();
-    if (!value) return '10m easy pace';
+    if (!value) return '10m Easy';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `${kmMatch[1]}km easy pace`;
+    if (kmMatch) return `${kmMatch[1]}km Easy`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
-    if (secMatch) return `${secMatch[1]}s easy`;
+    if (secMatch) return `${secMatch[1]}s Easy`;
 
     const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
-    if (minMatch) return `${minMatch[1]}m easy`;
+    if (minMatch) return `${minMatch[1]}m Easy`;
 
     return value;
   };
@@ -40,18 +40,18 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (!value || value === '0') return '';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `Rest ${kmMatch[1]}km easy pace`;
+    if (kmMatch) return `${kmMatch[1]}km Recovery`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
-    if (secMatch) return `Rest ${secMatch[1]}s`;
+    if (secMatch) return `${secMatch[1]}s Rest`;
 
     const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
-    if (minMatch) return `Rest ${minMatch[1]}m`;
+    if (minMatch) return `${minMatch[1]}m Rest`;
 
     const numericOnly = value.match(/^(\d+(?:\.\d+)?)$/);
-    if (numericOnly) return `Rest ${numericOnly[1]}s`;
+    if (numericOnly) return `${numericOnly[1]}s Rest`;
 
-    return `Rest ${value}`;
+    return `${value} Rest`;
   };
 
   const isPlaceholderStep = (raw?: string): boolean => {
@@ -78,8 +78,8 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     const low = (m[1] || '').trim();
     const high = (m[2] || '').trim();
     if (!low) return '';
-    if (!high) return `${low}/km Pace`;
-    return `${low}-${high}/km Pace`;
+    if (!high) return `@ ${low}/km`;
+    return `@ ${low}-${high}/km`;
   };
 
   const includeWarmup = !isPlaceholderStep(session.warmup);
@@ -104,12 +104,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       const only = session.intervals[0];
       const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
       const pace = toRangePaceToken(only.pace || '');
-      text += `Main Set\n- ${distStr}${pace ? ` ${pace} Pace` : ''}\n\n`;
+      text += `Main Set\n- ${distStr}${pace ? ` @ ${pace}` : ''}\n\n`;
     } else {
       text += `Main Set\n`;
       session.intervals.forEach((int) => {
         const pace = toRangePaceToken(int.pace || '');
-        const effort = pace ? `${pace} Pace` : '';
+        const effort = pace ? `@ ${pace}` : '';
         const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
         const reps = Math.max(1, Number(int.count) || 1);
         const recoveryStep = normalizeRecoveryStep(int.rest || '');
