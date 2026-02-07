@@ -5,6 +5,14 @@ import { WorkoutSession, IntervalsIcuConfig, WorkoutType } from '../types';
  * Focuses strictly on running metrics.
  */
 const formatIcuWorkoutText = (session: WorkoutSession): string => {
+  const getDynamicTitle = (): string => {
+    if (session.type !== WorkoutType.THRESHOLD || !session.intervals?.length) return session.title;
+    const first = session.intervals[0];
+    const reps = Math.max(1, Number(first.count) || 1);
+    const dist = Math.max(0, Number(first.distance) || 0);
+    const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
+    return `SubT ${reps}x${distLabel}`;
+  };
   const kmTokenFromMeters = (meters: number): string => {
     const km = Math.max(0, Number(meters) || 0) / 1000;
     const rounded = Math.round(km * 1000) / 1000;
@@ -77,14 +85,21 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   const includeWarmup = !isPlaceholderStep(session.warmup);
   const includeCooldown = !isPlaceholderStep(session.cooldown);
 
-  let text = `${session.title}\n\n`;
+  const dynamicTitle = getDynamicTitle();
+  let text = `${dynamicTitle}\n\n`;
 
   if (includeWarmup && session.warmup) {
     text += `Warmup\n- ${normalizeEasyStep(session.warmup)}\n\n`;
   }
 
   if (session.intervals && session.intervals.length > 0) {
-    if (session.type !== WorkoutType.THRESHOLD && session.intervals.length === 1) {
+    const hasSingleContinuousInterval =
+      session.type !== WorkoutType.THRESHOLD &&
+      session.intervals.length === 1 &&
+      Math.max(1, Number(session.intervals[0].count) || 1) === 1 &&
+      (!session.intervals[0].rest || session.intervals[0].rest === '0');
+
+    if (hasSingleContinuousInterval) {
       // Easy/steady/long single-session workouts must stay one step for Garmin sync.
       const only = session.intervals[0];
       const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
@@ -130,12 +145,20 @@ const getIcuType = (type: WorkoutType): string => {
 };
 
 const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
+  const dynamicTitle = ((): string => {
+    if (session.type !== WorkoutType.THRESHOLD || !session.intervals?.length) return session.title;
+    const first = session.intervals[0];
+    const reps = Math.max(1, Number(first.count) || 1);
+    const dist = Math.max(0, Number(first.distance) || 0);
+    const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
+    return `SubT ${reps}x${distLabel}`;
+  })();
   const icuWorkout = formatIcuWorkoutText(session);
   const movingTimeSec = Math.max(0, Math.round((Number(session.duration) || 0) * 60));
   return {
     category: 'WORKOUT',
     type: getIcuType(session.type),
-    name: session.title,
+    name: dynamicTitle,
     // Intervals.icu expects native workout text in "description" for planned workout parsing.
     description: icuWorkout,
     start_date_local: `${date}T00:00:00`,

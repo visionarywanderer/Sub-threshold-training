@@ -251,6 +251,15 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     return p > 0 ? secondsToTime(p) : '0:00';
   }, [profile, paceCorrectionSec]);
 
+  const displayTitle = useMemo(() => {
+    if (!isThreshold || !currentSession.intervals?.length) return currentSession.title;
+    const first = currentSession.intervals[0];
+    const reps = Math.max(1, Number(first.count) || 1);
+    const dist = Math.max(0, Number(first.distance) || 0);
+    const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
+    return `SubT ${reps}x${distLabel}`;
+  }, [currentSession.intervals, currentSession.title, isThreshold]);
+
   const getPrimaryPaceRange = () => {
     if (isThreshold && currentSession.intervals?.length) {
       const dist = Number(currentSession.intervals[0].distance);
@@ -297,7 +306,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
               {dayTypeLabel}
             </span>
           </div>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{currentSession.title}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{displayTitle}</p>
         </div>
 
         <div className="flex items-center gap-2">
