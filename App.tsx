@@ -65,6 +65,7 @@ const App: React.FC = () => {
   const [showScheduleWeekModal, setShowScheduleWeekModal] = useState(false);
   const [intervalsConfig, setIntervalsConfig] = useState<IntervalsIcuConfig>({ athleteId: '', apiKey: '', connected: false });
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
+  const [syncMessage, setSyncMessage] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
   const [weatherStatus, setWeatherStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'blocked'>('idle');
@@ -247,30 +248,56 @@ const App: React.FC = () => {
   const handleSyncEntireWeekToIcu = async (weekStartDate: string) => {
     if (!plan || !intervalsConfig.connected || !isAuthenticated) return;
     setSyncStatus('syncing');
+    setSyncMessage('');
     
     try {
       const newDays = [...plan.days];
+      const failedDays: string[] = [];
+      let syncedCount = 0;
       for (let i = 0; i < newDays.length; i++) {
         const day = newDays[i];
         const targetDate = new Date(weekStartDate);
         targetDate.setDate(targetDate.getDate() + i);
         const dateStr = formatLocalDate(targetDate);
+        const dayLabel = WEEKDAY_ORDER[i] || day.day;
 
         if (day.session) {
-          const eventId = await syncWorkoutToIcu(intervalsConfig, day.session, dateStr);
-          if (eventId) newDays[i] = { ...day, session: { ...day.session, icuEventId: eventId }, icuEventId: undefined };
+          const result = await syncWorkoutToIcu(intervalsConfig, day.session, dateStr);
+          if (result.ok && result.eventId) {
+            newDays[i] = { ...day, session: { ...day.session, icuEventId: result.eventId }, icuEventId: undefined };
+            syncedCount += 1;
+          } else {
+            failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
+          }
         } else {
-          const restEventId = await syncRestDayToIcu(intervalsConfig, dateStr, day.icuEventId);
-          if (restEventId) newDays[i] = { ...day, icuEventId: restEventId };
+          const result = await syncRestDayToIcu(intervalsConfig, dateStr, day.icuEventId);
+          if (result.ok && result.eventId) {
+            newDays[i] = { ...day, icuEventId: result.eventId };
+            syncedCount += 1;
+          } else {
+            failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
+          }
         }
       }
       setPlan({ ...plan, days: newDays });
       setStartDate(weekStartDate);
-      setSyncStatus('success');
-      setTimeout(() => setSyncStatus('idle'), 3000);
-      setShowScheduleWeekModal(false);
+
+      if (failedDays.length === 0) {
+        setSyncStatus('success');
+        setSyncMessage(`Scheduled ${syncedCount}/${newDays.length} days to Intervals.icu.`);
+        setShowScheduleWeekModal(false);
+      } else {
+        setSyncStatus('error');
+        setSyncMessage(`Scheduled ${syncedCount}/${newDays.length} days. Failed: ${failedDays.join(' | ')}`);
+      }
+
+      setTimeout(() => {
+        setSyncStatus('idle');
+        setSyncMessage('');
+      }, 7000);
     } catch (e) {
       setSyncStatus('error');
+      setSyncMessage(e instanceof Error ? e.message : 'Unexpected error while scheduling week.');
     }
   };
 
@@ -410,6 +437,12 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {!!syncMessage && (
+              <div className={`mb-6 px-4 py-3 rounded-xl border text-sm ${syncStatus === 'error' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/30 dark:border-red-900 dark:text-red-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-300'}`}>
+                {syncMessage}
+              </div>
+            )}
+
             {activeTab === 'plan' && plan && (
               <div className="animate-in fade-in slide-in-from-bottom-2 space-y-4">
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -432,11 +465,20 @@ const App: React.FC = () => {
                           }
                           const targetDate = new Date(startDate);
                           targetDate.setDate(targetDate.getDate() + idx);
-                          const newEventId = await syncWorkoutToIcu(intervalsConfig, day.session, formatLocalDate(targetDate));
-                          if (newEventId) {
+                          const result = await syncWorkoutToIcu(intervalsConfig, day.session, formatLocalDate(targetDate));
+                          if (result.ok && result.eventId) {
                             const newDays = [...plan.days];
-                            newDays[idx].session = { ...day.session, icuEventId: newEventId };
+                            newDays[idx].session = { ...day.session, icuEventId: result.eventId };
                             setPlan({ ...plan, days: newDays });
+                            setSyncStatus('success');
+                            setSyncMessage(`${WEEKDAY_ORDER[idx] || day.day} synced to Intervals.icu.`);
+                            setTimeout(() => {
+                              setSyncStatus('idle');
+                              setSyncMessage('');
+                            }, 4000);
+                          } else {
+                            setSyncStatus('error');
+                            setSyncMessage(`Failed to sync ${WEEKDAY_ORDER[idx] || day.day}: ${result.error || 'unknown error'}`);
                           }
                         }}
                         onUpdateSession={(updated: WorkoutSession) => {

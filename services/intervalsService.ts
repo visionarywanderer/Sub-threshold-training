@@ -56,12 +56,40 @@ const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
   };
 };
 
+export interface IcuSyncResult {
+  ok: boolean;
+  eventId: number | null;
+  status?: number;
+  error?: string;
+}
+
+const extractErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+  try {
+    const data = await response.json();
+    const msg = data?.message || data?.error || data?.detail;
+    if (msg) return String(msg);
+  } catch {
+    // Ignore JSON parse errors and fall back to text/status.
+  }
+
+  try {
+    const text = await response.text();
+    if (text) return text;
+  } catch {
+    // Ignore text parse errors.
+  }
+
+  return `${fallback} (${response.status})`;
+};
+
 export const syncWorkoutToIcu = async (
   config: IntervalsIcuConfig, 
   session: WorkoutSession, 
   date: string
-): Promise<number | null> => {
-  if (!config.connected || !config.athleteId || !config.apiKey) return null;
+): Promise<IcuSyncResult> => {
+  if (!config.connected || !config.athleteId || !config.apiKey) {
+    return { ok: false, eventId: null, error: 'Intervals.icu is not connected.' };
+  }
 
   const auth = btoa(`API_KEY:${config.apiKey}`);
   const payload = buildWorkoutPayload(session, date);
@@ -79,13 +107,24 @@ export const syncWorkoutToIcu = async (
       body: JSON.stringify(payload)
     });
 
-    if (!response.ok) throw new Error('Failed to sync to Intervals.icu');
+    if (!response.ok) {
+      return {
+        ok: false,
+        eventId: null,
+        status: response.status,
+        error: await extractErrorMessage(response, 'Failed to sync workout to Intervals.icu'),
+      };
+    }
     
     const data = await response.json();
-    return data.id; // Returns the event ID
+    return { ok: true, eventId: Number(data.id) || null };
   } catch (error) {
     console.error('Intervals.icu Sync Error:', error);
-    return null;
+    return {
+      ok: false,
+      eventId: null,
+      error: error instanceof Error ? error.message : 'Network error while syncing workout.',
+    };
   }
 };
 
@@ -93,8 +132,10 @@ export const syncRestDayToIcu = async (
   config: IntervalsIcuConfig,
   date: string,
   eventId?: number
-): Promise<number | null> => {
-  if (!config.connected || !config.athleteId || !config.apiKey) return null;
+): Promise<IcuSyncResult> => {
+  if (!config.connected || !config.athleteId || !config.apiKey) {
+    return { ok: false, eventId: null, error: 'Intervals.icu is not connected.' };
+  }
 
   const auth = btoa(`API_KEY:${config.apiKey}`);
   const payload = {
@@ -116,12 +157,23 @@ export const syncRestDayToIcu = async (
       },
       body: JSON.stringify(payload)
     });
-    if (!response.ok) throw new Error('Failed to sync rest day to Intervals.icu');
+    if (!response.ok) {
+      return {
+        ok: false,
+        eventId: null,
+        status: response.status,
+        error: await extractErrorMessage(response, 'Failed to sync rest day to Intervals.icu'),
+      };
+    }
     const data = await response.json();
-    return data.id;
+    return { ok: true, eventId: Number(data.id) || null };
   } catch (error) {
     console.error('Intervals.icu Rest Day Sync Error:', error);
-    return null;
+    return {
+      ok: false,
+      eventId: null,
+      error: error instanceof Error ? error.message : 'Network error while syncing rest day.',
+    };
   }
 };
 
