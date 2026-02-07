@@ -64,22 +64,54 @@ export interface IcuSyncResult {
 }
 
 const extractErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+  let raw = '';
   try {
-    const data = await response.json();
-    const msg = data?.message || data?.error || data?.detail;
-    if (msg) return String(msg);
+    raw = await response.text();
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        const msg = data?.message || data?.error || data?.detail;
+        if (msg) return String(msg);
+      } catch {
+        return raw;
+      }
+      return raw;
+    }
   } catch {
-    // Ignore JSON parse errors and fall back to text/status.
+    // Ignore read errors and use fallback.
   }
 
-  try {
-    const text = await response.text();
-    if (text) return text;
-  } catch {
-    // Ignore text parse errors.
+  if (raw) {
+    return raw;
   }
 
   return `${fallback} (${response.status})`;
+};
+
+const parseSuccessJson = async (response: Response): Promise<any | null> => {
+  const raw = await response.text();
+  if (!raw || !raw.trim()) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const resolveEventId = (parsed: any, existingId?: number): number | null => {
+  const parsedId = Number(parsed?.id);
+  if (Number.isFinite(parsedId) && parsedId > 0) return parsedId;
+  if (existingId && Number.isFinite(existingId) && existingId > 0) return existingId;
+  return null;
+};
+
+const parseAndResolveSuccessId = async (response: Response, existingId?: number): Promise<number | null> => {
+  try {
+    const data = await parseSuccessJson(response);
+    return resolveEventId(data, existingId);
+  } catch {
+    return existingId || null;
+  }
 };
 
 export const syncWorkoutToIcu = async (
@@ -116,8 +148,8 @@ export const syncWorkoutToIcu = async (
       };
     }
     
-    const data = await response.json();
-    return { ok: true, eventId: Number(data.id) || null };
+    const eventId = await parseAndResolveSuccessId(response, session.icuEventId);
+    return { ok: true, eventId };
   } catch (error) {
     console.error('Intervals.icu Sync Error:', error);
     return {
@@ -165,8 +197,8 @@ export const syncRestDayToIcu = async (
         error: await extractErrorMessage(response, 'Failed to sync rest day to Intervals.icu'),
       };
     }
-    const data = await response.json();
-    return { ok: true, eventId: Number(data.id) || null };
+    const syncedEventId = await parseAndResolveSuccessId(response, eventId);
+    return { ok: true, eventId: syncedEventId };
   } catch (error) {
     console.error('Intervals.icu Rest Day Sync Error:', error);
     return {
