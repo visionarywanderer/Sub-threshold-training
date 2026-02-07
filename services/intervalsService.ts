@@ -13,16 +13,16 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
 
   const normalizeEasyStep = (raw: string): string => {
     const value = (raw || '').trim();
-    if (!value) return '10m Easy Recovery Pace';
+    if (!value) return '10m easy pace';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `${kmMatch[1]}km Easy Recovery Pace`;
+    if (kmMatch) return `${kmMatch[1]}km easy pace`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
-    if (secMatch) return `${secMatch[1]}s Easy Recovery`;
+    if (secMatch) return `${secMatch[1]}s easy`;
 
     const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
-    if (minMatch) return `${minMatch[1]}m Easy Recovery`;
+    if (minMatch) return `${minMatch[1]}m easy`;
 
     return value;
   };
@@ -32,7 +32,7 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (!value || value === '0') return '';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `${kmMatch[1]}km Easy Recovery Pace`;
+    if (kmMatch) return `${kmMatch[1]}km easy pace`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
     if (secMatch) return `${secMatch[1]}s Easy`;
@@ -44,6 +44,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (numericOnly) return `${numericOnly[1]}s Easy`;
 
     return `${value} Easy`;
+  };
+
+  const isPlaceholderStep = (raw?: string): boolean => {
+    const v = (raw || '').trim().toLowerCase();
+    if (!v) return true;
+    return v === 'n/a' || v === 'na' || v === 'direct start' || v === 'walk off' || v === 'none';
   };
 
   const toRangePaceToken = (pace: string): string => {
@@ -68,17 +74,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     return `${low}-${high}/km Pace`;
   };
 
-  const hasStructuredIntervals = !!session.intervals?.some((int) => {
-    const reps = Math.max(1, Number(int.count) || 1);
-    const hasRest = !!int.rest && int.rest !== '0';
-    return reps > 1 || hasRest;
-  });
-
-  const includeWarmupCooldown = session.type === WorkoutType.THRESHOLD || hasStructuredIntervals;
+  const includeWarmup = !isPlaceholderStep(session.warmup);
+  const includeCooldown = !isPlaceholderStep(session.cooldown);
 
   let text = `${session.title}\n\n`;
 
-  if (includeWarmupCooldown && session.warmup) {
+  if (includeWarmup && session.warmup) {
     text += `Warmup\n- ${normalizeEasyStep(session.warmup)}\n\n`;
   }
 
@@ -117,7 +118,7 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     text += `Main Set\n- ${session.distance}km${easyPace ? ` ${easyPace}` : ''}\n\n`;
   }
 
-  if (includeWarmupCooldown && session.cooldown) {
+  if (includeCooldown && session.cooldown) {
     text += `Cooldown\n- ${normalizeEasyStep(session.cooldown)}\n`;
   }
 
