@@ -54,14 +54,15 @@ const getIcuType = (type: WorkoutType): string => {
 
 const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
   const icuWorkout = formatIcuWorkoutText(session);
+  const movingTimeSec = Math.max(0, Math.round((Number(session.duration) || 0) * 60));
   return {
     category: 'WORKOUT',
     type: getIcuType(session.type),
     name: session.title,
-    // Intervals API is more reliable with minimal event payload on create/update.
+    // Intervals.icu expects native workout text in "description" for planned workout parsing.
+    description: icuWorkout,
     start_date_local: `${date}T00:00:00`,
-    workout: icuWorkout,
-    moving_time: session.duration * 60
+    moving_time: movingTimeSec
   };
 };
 
