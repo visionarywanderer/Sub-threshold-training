@@ -325,6 +325,51 @@ const App: React.FC = () => {
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
+        <main className="max-w-5xl mx-auto px-6 py-16 md:py-24">
+          <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 shadow-sm p-8 md:p-12">
+            <div className="pointer-events-none absolute -top-20 -right-14 w-56 h-56 bg-norway-blue/10 dark:bg-norway-blue/20 rounded-full blur-2xl" />
+            <div className="pointer-events-none absolute -bottom-24 -left-16 w-64 h-64 bg-slate-300/30 dark:bg-slate-500/20 rounded-full blur-2xl" />
+
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                NorskFlow Run
+              </div>
+              <h1 className="mt-5 text-3xl md:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                Norwegian Method Planner
+              </h1>
+              <p className="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-300 max-w-3xl">
+                Build and manage your week with threshold pacing, weather-adjusted guidance, editable workout steps, and Intervals.icu sync ready for Garmin.
+              </p>
+
+              <div className="mt-8 grid sm:grid-cols-2 gap-3 text-sm">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Dynamic paces from your 5K benchmark + VDOT</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Weather-aware threshold adjustments with delta</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Drag and drop weekly plan with editable sessions</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Intervals.icu calendar sync with explicit workout steps</div>
+              </div>
+
+              <div className="mt-10 flex flex-col sm:flex-row sm:items-center gap-4">
+                {GOOGLE_CLIENT_ID ? (
+                  <div id="google-login-btn"></div>
+                ) : (
+                  <p className="text-sm text-red-600 dark:text-red-300">
+                    Google login is not configured. Set <code className="font-mono">VITE_GOOGLE_CLIENT_ID</code>.
+                  </p>
+                )}
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Sign in with Google to access your dashboard and saved training data.
+                </p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-20 transition-colors">
       <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-100 dark:border-slate-800 sticky top-0 z-40 backdrop-blur">
