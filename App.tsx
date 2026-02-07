@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig } from './types';
+import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession } from './types';
 import { applyPaceCorrection, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
 import { syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
-import WorkoutCard from './components/WorkoutCard';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
-import { ChevronUp, ChevronDown, MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun } from 'lucide-react';
+import SortableDayItem from './components/SortableDayItem';
+import { MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun, Moon, Sun } from 'lucide-react';
+import { DndContext, DragEndEvent, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 
 declare global {
   interface Window {
@@ -16,8 +18,10 @@ declare global {
 
 const RUN_STORAGE_KEY_PREFIX = 'norskflow_run_profile';
 const ICU_CONFIG_KEY_PREFIX = 'norskflow_icu_config';
+const THEME_STORAGE_KEY = 'norskflow_theme';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID as string | undefined;
 const FIVE_K_DISTANCE = 5000;
+const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear();
@@ -26,19 +30,9 @@ const formatLocalDate = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-const DEFAULT_RUN_SCHEDULE: UserSchedule = {
-  'Monday': DayType.EASY, 'Tuesday': DayType.THRESHOLD, 'Wednesday': DayType.EASY,
-  'Thursday': DayType.THRESHOLD, 'Friday': DayType.EASY, 'Saturday': DayType.REST, 'Sunday': DayType.THRESHOLD
-};
-
 const EMPTY_RUN_SCHEDULE: UserSchedule = {
   'Monday': DayType.REST, 'Tuesday': DayType.REST, 'Wednesday': DayType.REST,
   'Thursday': DayType.REST, 'Friday': DayType.REST, 'Saturday': DayType.REST, 'Sunday': DayType.REST
-};
-
-const DEFAULT_RUN_PROFILE: UserProfile = {
-  name: "Guest Runner", raceDistance: FIVE_K_DISTANCE, raceTime: "19:07", maxHR: 190, weeklyVolume: 80,
-  unit: DistanceUnit.KM, schedule: DEFAULT_RUN_SCHEDULE, warmupDist: 2.0, cooldownDist: 1.0
 };
 
 const EMPTY_RUN_PROFILE: UserProfile = {
@@ -61,6 +55,8 @@ interface WeatherSnapshot {
   windKmh: number;
 }
 
+type ThemeMode = 'light' | 'dark';
+
 const App: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile>(EMPTY_RUN_PROFILE);
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
@@ -76,6 +72,10 @@ const App: React.FC = () => {
     const d = new Date();
     d.setDate(d.getDate() + (1 - d.getDay() + 7) % 7); // Next Monday
     return formatLocalDate(d);
+  });
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    return saved === 'dark' ? 'dark' : 'light';
   });
 
   // Logged-out default: empty profile and no connected integrations.
@@ -124,6 +124,11 @@ const App: React.FC = () => {
   useEffect(() => {
     fetchWeather();
   }, [fetchWeather]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   const handleCredentialResponse = useCallback((response: any) => {
     const userData = JSON.parse(atob(response.credential.split('.')[1]));
@@ -241,33 +246,33 @@ const App: React.FC = () => {
     }
   };
 
-  const moveSession = async (index: number, direction: 'up' | 'down') => {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
     if (!plan) return;
-    const newDays = [...plan.days];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= newDays.length) return;
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
 
-    // Swap content
-    const tempType = newDays[index].type;
-    const tempSession = newDays[index].session;
-    const tempDayEventId = newDays[index].icuEventId;
-    newDays[index].type = newDays[targetIndex].type;
-    newDays[index].session = newDays[targetIndex].session;
-    newDays[index].icuEventId = newDays[targetIndex].icuEventId;
-    newDays[targetIndex].type = tempType;
-    newDays[targetIndex].session = tempSession;
-    newDays[targetIndex].icuEventId = tempDayEventId;
+    const oldIndex = plan.days.findIndex((d) => `day-${d.day}` === active.id);
+    const newIndex = plan.days.findIndex((d) => `day-${d.day}` === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
 
-    setPlan({ ...plan, days: newDays });
+    const reordered = arrayMove(plan.days, oldIndex, newIndex);
+    setPlan({ ...plan, days: reordered });
 
-    if (intervalsConfig.connected && (newDays[index].session?.icuEventId || newDays[targetIndex].session?.icuEventId)) {
-        handleSyncEntireWeekToIcu(startDate);
+    const movedSynced = reordered[oldIndex]?.session?.icuEventId || reordered[newIndex]?.session?.icuEventId;
+    if (intervalsConfig.connected && movedSynced) {
+      handleSyncEntireWeekToIcu(startDate);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] text-slate-900 font-sans pb-20">
-      <header className="bg-white border-b border-slate-100 sticky top-0 z-40">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-20 transition-colors">
+      <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-100 dark:border-slate-800 sticky top-0 z-40 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-6 bg-slate-800 rounded flex items-center justify-center relative shadow-sm">
@@ -277,13 +282,20 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4">
+             <button
+               onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+               className="w-9 h-9 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-center"
+               aria-label="Toggle theme"
+             >
+               {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+             </button>
              {isAuthenticated ? (
-               <div className="flex items-center gap-3 bg-slate-50 p-1 pl-4 rounded-full border border-slate-100">
+               <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 p-1 pl-4 rounded-full border border-slate-100 dark:border-slate-700">
                   <div className="hidden md:block">
-                    <p className="text-[10px] font-bold text-slate-900 uppercase leading-none">{profile.name}</p>
-                    <p className="text-[9px] text-slate-400 leading-none">{profile.email}</p>
+                    <p className="text-[10px] font-bold text-slate-900 dark:text-slate-100 uppercase leading-none">{profile.name}</p>
+                    <p className="text-[9px] text-slate-400 dark:text-slate-400 leading-none">{profile.email}</p>
                   </div>
-                  <button onClick={handleLogout} className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 hover:text-norway-red transition-colors shadow-sm">
+                  <button onClick={handleLogout} className="w-8 h-8 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-norway-red transition-colors shadow-sm">
                     <LogOut size={14} />
                   </button>
                </div>
@@ -296,52 +308,50 @@ const App: React.FC = () => {
 
       <main className="max-w-6xl mx-auto px-6 py-10">
         <section className="mb-12">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 sm:gap-6 mb-10">
-                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Benchmark</p>
-                    <p className="text-2xl font-bold text-slate-900">{profile.raceTime} (5K)</p>
+            <section className="rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 shadow-sm px-6 py-6 md:px-8 md:py-7 mb-10">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                <div className="min-w-0">
+                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Threshold Works</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Plan volume {plan?.totalDistance || 0}km</p>
                 </div>
-                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">SubT Pace</p>
-                    <p className="text-2xl font-bold text-slate-900">{secondsToTime(correctedThreshold)}</p>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      Base {secondsToTime(currentThreshold)} (Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km)
-                    </p>
+
+                <div className="lg:text-center">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">SubT Pace</p>
+                  <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 font-medium">/km</span></p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                    Base {secondsToTime(currentThreshold)}. Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km
+                  </p>
                 </div>
-                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Week Target</p>
-                    <p className="text-2xl font-bold text-slate-900">{profile.weeklyVolume}km</p>
-                </div>
-                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Plan Volume</p>
-                    <p className="text-2xl font-bold text-slate-900">{plan?.totalDistance || 0}km</p>
-                </div>
-                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Weather</p>
-                      <button onClick={fetchWeather} className="text-slate-400 hover:text-slate-700"><RefreshCw size={14} /></button>
+
+                <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-5 py-3 min-w-[250px]">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Weather</p>
+                      {weather ? (
+                        <>
+                          <p className="text-3xl font-semibold text-slate-900 dark:text-slate-100 mt-0.5">{Math.round(weather.temperatureC)}C</p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Humidity {Math.round(weather.humidityPct)}% · Dew {Math.round(weather.dewPointC)}C · Wind {Math.round(weather.windKmh)} km/h</p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-slate-400 mt-1">{weatherStatus === 'loading' ? 'Loading...' : weatherStatus === 'blocked' ? 'Location blocked' : weatherStatus === 'error' ? 'Weather unavailable' : 'No weather data'}</p>
+                      )}
                     </div>
-                    {weather ? (
-                      <>
-                        <p className="text-sm font-bold text-slate-900 flex items-center gap-1"><CloudSun size={14} /> {Math.round(weather.temperatureC)}C</p>
-                        <p className="text-[10px] text-slate-500 mt-1">Humidity: {Math.round(weather.humidityPct)}%</p>
-                        <p className="text-[10px] text-slate-500">Dew point: {Math.round(weather.dewPointC)}C</p>
-                        <p className="text-[10px] text-slate-500">Wind: {Math.round(weather.windKmh)} km/h</p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-slate-400">{weatherStatus === 'loading' ? 'Loading...' : weatherStatus === 'blocked' ? 'Location blocked' : weatherStatus === 'error' ? 'Weather unavailable' : 'No weather data'}</p>
-                    )}
+                    <button onClick={fetchWeather} className="p-2 rounded-full border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700">
+                      <CloudSun size={14} />
+                    </button>
+                  </div>
                 </div>
-            </div>
+              </div>
+            </section>
             
             <div className="flex items-center justify-between mb-8">
-              <nav className="flex gap-2 bg-slate-100 p-1 rounded-xl">
-                 <button onClick={() => setActiveTab('plan')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'plan' ? 'bg-white shadow-sm text-norway-blue' : 'text-slate-500 hover:text-slate-700'}`}>Weekly Plan</button>
-                 <button onClick={() => setActiveTab('pacing')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'pacing' ? 'bg-white shadow-sm text-norway-blue' : 'text-slate-500 hover:text-slate-700'}`}>Pacing Table</button>
+              <nav className="flex gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                 <button onClick={() => setActiveTab('plan')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'plan' ? 'bg-white dark:bg-slate-700 shadow-sm text-norway-blue' : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'}`}>Weekly Plan</button>
+                 <button onClick={() => setActiveTab('pacing')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'pacing' ? 'bg-white dark:bg-slate-700 shadow-sm text-norway-blue' : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'}`}>Pacing Table</button>
               </nav>
               <div className="flex gap-2">
                  {isAuthenticated && intervalsConfig.connected && (
-                   <div className="flex items-center gap-3 bg-white border border-slate-200 px-4 py-1.5 rounded-xl shadow-sm">
+                   <div className="flex items-center gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-1.5 rounded-xl shadow-sm">
                       <button 
                         onClick={() => setShowScheduleWeekModal(true)}
                         disabled={syncStatus === 'syncing'}
@@ -352,63 +362,51 @@ const App: React.FC = () => {
                       </button>
                    </div>
                  )}
-                 <button onClick={() => setActiveTab('settings')} className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-norway-blue hover:border-norway-blue transition-all shadow-sm">
+                 <button onClick={() => setActiveTab('settings')} className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-500 dark:text-slate-300 hover:text-norway-blue hover:border-norway-blue transition-all shadow-sm">
                    <MoreHorizontal size={20}/>
                  </button>
               </div>
             </div>
 
             {activeTab === 'plan' && plan && (
-              <div className="animate-in fade-in slide-in-from-bottom-2 space-y-1">
-                {plan.days.map((day, idx) => (
-                    <div key={day.day} className="relative group">
-                        <div className="flex items-center justify-between mb-2 pt-8">
-                            <div className="flex items-center gap-4">
-                                <h3 className="text-lg font-bold text-slate-900 tracking-tight">{day.day}</h3>
-                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${day.type.includes('Threshold') ? 'bg-norway-red/10 text-norway-red' : 'bg-slate-100 text-slate-400'}`}>
-                                    {day.type}
-                                </span>
-                            </div>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => moveSession(idx, 'up')} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400"><ChevronUp size={16}/></button>
-                                <button onClick={() => moveSession(idx, 'down')} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400"><ChevronDown size={16}/></button>
-                            </div>
-                        </div>
-                        {day.session ? (
-                            <WorkoutCard 
-                                session={{...day.session}} 
-                                isSynced={!!day.session.icuEventId}
-                                paceCorrectionSec={weatherPaceDeltaSec}
-                                onSync={async (id) => {
-                                    if(!intervalsConfig.connected) {
-                                        if (!isAuthenticated) return;
-                                        setShowIntervalsModal(true);
-                                        return;
-                                    }
-                                    const targetDate = new Date(startDate);
-                                    targetDate.setDate(targetDate.getDate() + idx);
-                                    const newEventId = await syncWorkoutToIcu(intervalsConfig, day.session!, formatLocalDate(targetDate));
-                                    if(newEventId) {
-                                        const newDays = [...plan.days];
-                                        newDays[idx].session = { ...day.session!, icuEventId: newEventId };
-                                        setPlan({ ...plan, days: newDays });
-                                    }
-                                }} 
-                                profile={profile}
-                                onUpdateSession={(updated) => {
-                                  const newDays = [...plan.days];
-                                  newDays[idx].session = updated;
-                                  newDays[idx].icuEventId = undefined;
-                                  setPlan({ ...plan, days: newDays });
-                                }}
-                            />
-                        ) : (
-                          <div className="p-8 bg-white border border-slate-100 rounded-2xl mb-6 flex items-center justify-center">
-                              <p className="text-slate-300 font-medium text-sm italic">Rest or Recovery</p>
-                          </div>
-                        )}
-                    </div>
-                ))}
+              <div className="animate-in fade-in slide-in-from-bottom-2 space-y-4">
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={plan.days.map((d) => `day-${d.day}`)} strategy={verticalListSortingStrategy}>
+                    {plan.days.map((day, idx) => (
+                      <SortableDayItem
+                        key={day.day}
+                        itemId={`day-${day.day}`}
+                        dayLabel={WEEKDAY_ORDER[idx] || day.day}
+                        day={day}
+                        profile={profile}
+                        paceCorrectionSec={weatherPaceDeltaSec}
+                        isSynced={!!day.session?.icuEventId}
+                        onSyncSession={async () => {
+                          if (!day.session) return;
+                          if (!intervalsConfig.connected) {
+                            if (!isAuthenticated) return;
+                            setShowIntervalsModal(true);
+                            return;
+                          }
+                          const targetDate = new Date(startDate);
+                          targetDate.setDate(targetDate.getDate() + idx);
+                          const newEventId = await syncWorkoutToIcu(intervalsConfig, day.session, formatLocalDate(targetDate));
+                          if (newEventId) {
+                            const newDays = [...plan.days];
+                            newDays[idx].session = { ...day.session, icuEventId: newEventId };
+                            setPlan({ ...plan, days: newDays });
+                          }
+                        }}
+                        onUpdateSession={(updated: WorkoutSession) => {
+                          const newDays = [...plan.days];
+                          newDays[idx].session = updated;
+                          newDays[idx].icuEventId = undefined;
+                          setPlan({ ...plan, days: newDays });
+                        }}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               </div>
             )}
 
@@ -419,11 +417,11 @@ const App: React.FC = () => {
             )}
 
             {activeTab === 'settings' && (
-              <div className="fixed inset-0 bg-white/98 backdrop-blur-md z-50 overflow-y-auto p-6 sm:p-10 animate-in fade-in duration-300">
+              <div className="fixed inset-0 bg-white/98 dark:bg-slate-950/98 backdrop-blur-md z-50 overflow-y-auto p-6 sm:p-10 animate-in fade-in duration-300">
                  <div className="max-w-2xl mx-auto space-y-10">
-                    <div className="flex justify-between items-center sticky top-0 bg-white/10 py-4 z-10">
+                    <div className="flex justify-between items-center sticky top-0 bg-white/10 dark:bg-slate-950/10 py-4 z-10">
                         <h2 className="text-3xl font-bold text-norway-blue tracking-tight">Plan Config</h2>
-                        <button onClick={() => setActiveTab('plan')} className="w-10 h-10 rounded-full hover:bg-slate-100 flex items-center justify-center border border-slate-100"><MoreHorizontal size={24}/></button>
+                        <button onClick={() => setActiveTab('plan')} className="w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-slate-700"><MoreHorizontal size={24}/></button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
@@ -432,7 +430,7 @@ const App: React.FC = () => {
                             <div>
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Benchmark Distance</label>
                                 <div className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-slate-800">
-                                  5K (fixed)
+                                  5K
                                 </div>
                             </div>
                             <div>
