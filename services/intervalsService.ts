@@ -78,8 +78,8 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     const low = (m[1] || '').trim();
     const high = (m[2] || '').trim();
     if (!low) return '';
-    if (!high) return `@ ${low}/km`;
-    return `@ ${low}-${high}/km`;
+    if (!high) return `${low}/km Pace`;
+    return `${low}-${high}/km Pace`;
   };
 
   const includeWarmup = !isPlaceholderStep(session.warmup);
@@ -104,12 +104,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       const only = session.intervals[0];
       const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
       const pace = toRangePaceToken(only.pace || '');
-      text += `Main Set\n- ${distStr}${pace ? ` @ ${pace}` : ''}\n\n`;
+      text += `Main Set\n- ${distStr}${pace ? ` ${pace}` : ''}\n\n`;
     } else {
       text += `Main Set\n`;
       session.intervals.forEach((int) => {
         const pace = toRangePaceToken(int.pace || '');
-        const effort = pace ? `@ ${pace}` : '';
+        const effort = pace ? `${pace} Pace` : '';
         const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
         const reps = Math.max(1, Number(int.count) || 1);
         const recoveryStep = normalizeRecoveryStep(int.rest || '');
