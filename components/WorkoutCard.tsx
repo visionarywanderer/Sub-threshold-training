@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, GripVertical, RefreshCw } from 'lucide-react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
-import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, secondsToTime } from '../utils/calculations';
+import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, formatThresholdSessionTitle, getEasyRunPaceRange, getIntervalPaceRange, secondsToTime } from '../utils/calculations';
 
 interface WorkoutCardProps {
   session: WorkoutSession;
@@ -161,6 +161,9 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
 
       return {
         ...session,
+        title: newIntervals.length
+          ? formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0))
+          : session.title,
         intervals: newIntervals,
         distance: sessionDistance,
         duration: sessionDuration,

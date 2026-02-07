@@ -1,5 +1,12 @@
 import { UserProfile, WeeklyPlan, WorkoutType, WorkoutSession, DailyPlan, DayType } from '../types';
 
+export const formatThresholdSessionTitle = (reps: number, distanceMeters: number): string => {
+  const safeReps = Math.max(1, Math.round(Number(reps) || 1));
+  const dist = Math.max(0, Number(distanceMeters) || 0);
+  const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
+  return `SubT ${safeReps}x${distLabel}`;
+};
+
 export const timeToSeconds = (time: string): number => {
   if (!time) return 0;
   const parts = time.split(':').map(part => parseInt(part) || 0);
@@ -290,7 +297,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
 
     return {
       id: id,
-      title: `SubT Run`,
+      title: formatThresholdSessionTitle(reps, dist),
       type: WorkoutType.THRESHOLD,
       distance: Math.round(sessionDist * 10) / 10,
       duration: Math.round(sessionDist * (tPace / 60) * 1.05),

@@ -32,18 +32,18 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (!value || value === '0') return '';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `${kmMatch[1]}km easy pace`;
+    if (kmMatch) return `Rest ${kmMatch[1]}km easy pace`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
-    if (secMatch) return `${secMatch[1]}s Easy`;
+    if (secMatch) return `Rest ${secMatch[1]}s`;
 
     const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
-    if (minMatch) return `${minMatch[1]}m Easy`;
+    if (minMatch) return `Rest ${minMatch[1]}m`;
 
     const numericOnly = value.match(/^(\d+(?:\.\d+)?)$/);
-    if (numericOnly) return `${numericOnly[1]}s Easy`;
+    if (numericOnly) return `Rest ${numericOnly[1]}s`;
 
-    return `${value} Easy`;
+    return `Rest ${value}`;
   };
 
   const isPlaceholderStep = (raw?: string): boolean => {
