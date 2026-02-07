@@ -19,7 +19,7 @@ declare global {
 const RUN_STORAGE_KEY_PREFIX = 'norskflow_run_profile';
 const ICU_CONFIG_KEY_PREFIX = 'norskflow_icu_config';
 const THEME_STORAGE_KEY = 'norskflow_theme';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID as string | undefined;
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 const FIVE_K_DISTANCE = 5000;
 const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
