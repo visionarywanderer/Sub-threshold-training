@@ -30,6 +30,12 @@ const formatLocalDate = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
+const parseLocalDate = (isoDate: string): Date => {
+  const [year, month, day] = isoDate.split('-').map((v) => Number(v));
+  if (!year || !month || !day) return new Date(isoDate);
+  return new Date(year, month - 1, day);
+};
+
 const EMPTY_RUN_SCHEDULE: UserSchedule = {
   'Monday': DayType.REST, 'Tuesday': DayType.REST, 'Wednesday': DayType.REST,
   'Thursday': DayType.REST, 'Friday': DayType.REST, 'Saturday': DayType.REST, 'Sunday': DayType.REST
@@ -256,7 +262,7 @@ const App: React.FC = () => {
       let syncedCount = 0;
       for (let i = 0; i < newDays.length; i++) {
         const day = newDays[i];
-        const targetDate = new Date(weekStartDate);
+        const targetDate = parseLocalDate(weekStartDate);
         targetDate.setDate(targetDate.getDate() + i);
         const dateStr = formatLocalDate(targetDate);
         const dayLabel = WEEKDAY_ORDER[i] || day.day;
@@ -508,7 +514,7 @@ const App: React.FC = () => {
                             setShowIntervalsModal(true);
                             return;
                           }
-                          const targetDate = new Date(startDate);
+                          const targetDate = parseLocalDate(startDate);
                           targetDate.setDate(targetDate.getDate() + idx);
                           const result = await syncWorkoutToIcu(intervalsConfig, day.session, formatLocalDate(targetDate));
                           if (result.ok && result.eventId) {

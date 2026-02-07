@@ -98,10 +98,8 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     const low = (m[1] || '').trim();
     const high = (m[2] || '').trim();
     if (!low) return '';
-    if (!high) return `@ ${low}/km`;
-    const paceRange = `${low}-${high}/km`;
-    const single = toSinglePaceFromRange(paceRange);
-    return single ? `@ ${single}` : `@ ${low}/km`;
+    if (!high) return `${low}/km Pace`;
+    return `${low}-${high}/km Pace`;
   };
 
   const includeWarmup = !isPlaceholderStep(session.warmup);
@@ -126,13 +124,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       const only = session.intervals[0];
       const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
       const pace = toRangePaceToken(only.pace || '');
-      const paceTarget = toSinglePaceFromRange(pace);
-      text += `Main Set\n- Run ${distStr}${paceTarget ? ` @ ${paceTarget}` : ''}\n\n`;
+      text += `Main Set\n- ${distStr}${pace ? ` ${pace} Pace` : ''}\n\n`;
     } else {
       text += `Main Set\n`;
       session.intervals.forEach((int) => {
         const pace = toRangePaceToken(int.pace || '');
-        const paceTarget = toSinglePaceFromRange(pace);
+        const effort = pace ? `${pace} Pace` : '';
         const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
         const reps = Math.max(1, Number(int.count) || 1);
         const recoveryStep = normalizeRecoveryStep(int.rest || '');
@@ -140,10 +137,10 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
         if (reps > 1) {
           // Keep a compact repeat block so Garmin gets a repeat, not a long flat list.
           text += `${reps}x\n`;
-          text += `- Run ${distStr}${paceTarget ? ` @ ${paceTarget}` : ''}\n`;
+          text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
           if (recoveryStep) text += `- ${recoveryStep}\n`;
         } else {
-          text += `- Run ${distStr}${paceTarget ? ` @ ${paceTarget}` : ''}\n`;
+          text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
           if (recoveryStep) {
             text += `- ${recoveryStep}\n`;
           }
@@ -153,7 +150,7 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     }
   } else {
     const easyPace = extractEasyPaceFromDescription(session.description || '');
-    text += `Main Set\n- Run ${session.distance}km${easyPace ? ` ${easyPace}` : ''}\n\n`;
+    text += `Main Set\n- ${session.distance}km${easyPace ? ` ${easyPace}` : ''}\n\n`;
   }
 
   if (includeCooldown && session.cooldown) {
@@ -184,7 +181,7 @@ const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
     name: dynamicTitle,
     // Intervals.icu expects native workout text in "description" for planned workout parsing.
     description: icuWorkout,
-    start_date_local: `${date}T00:00:00`,
+    start_date_local: `${date}T08:00:00`,
     moving_time: movingTimeSec
   };
 };
@@ -308,7 +305,7 @@ export const syncRestDayToIcu = async (
     type: 'Run',
     name: 'Rest Day',
     description: 'Rest Day\n\nMain Set\n- 20m Easy Recovery\n',
-    start_date_local: `${date}T00:00:00`
+    start_date_local: `${date}T08:00:00`
   };
 
   try {
