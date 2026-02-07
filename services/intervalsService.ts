@@ -5,44 +5,51 @@ import { WorkoutSession, IntervalsIcuConfig, WorkoutType } from '../types';
  * Focuses strictly on running metrics.
  */
 const formatIcuWorkoutText = (session: WorkoutSession): string => {
-  const toSinglePace = (pace: string): string => {
+  const toPaceToken = (pace: string): string => {
     const trimmed = (pace || '').trim();
     if (!trimmed) return '';
-    if (!trimmed.includes('-')) return trimmed;
-    const [start] = trimmed.split('-');
-    return start.trim();
+    if (trimmed.includes('/km')) return trimmed;
+    return `${trimmed}/km`;
   };
+
+  const hasStructuredIntervals = !!session.intervals?.some((int) => {
+    const reps = Math.max(1, Number(int.count) || 1);
+    const hasRest = !!int.rest && int.rest !== '0';
+    return reps > 1 || hasRest;
+  });
+
+  const includeWarmupCooldown = session.type === WorkoutType.THRESHOLD || hasStructuredIntervals;
 
   let text = `${session.title}\n\n`;
 
-  if (session.warmup) {
-    text += `Warmup\n- ${session.warmup.includes('km') ? session.warmup : '10m 60% HR'}\n\n`;
+  if (includeWarmupCooldown && session.warmup) {
+    text += `Warmup\n- ${session.warmup}\n\n`;
   }
 
   if (session.intervals && session.intervals.length > 0) {
     text += `Main Set\n`;
     session.intervals.forEach((int) => {
-      const singlePace = toSinglePace(int.pace || '');
-      const effort = singlePace ? `${singlePace}/km` : "Sub-T";
+      const paceToken = toPaceToken(int.pace || '');
+      const effort = paceToken ? `${paceToken} Pace` : "";
       const distStr = int.distance > 0 ? (int.distance < 1000 ? `${int.distance}m` : `${int.distance / 1000}km`) : "";
       const reps = Math.max(1, Number(int.count) || 1);
 
       // Expand each rep into an explicit step so Intervals.icu can forward clean step data to Garmin.
       for (let rep = 0; rep < reps; rep++) {
-        text += `- ${distStr} ${effort}\n`;
+        text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
         if (int.rest && int.rest !== "0" && rep < reps - 1) {
-          text += `- Rest ${int.rest}\n`;
+          text += `- ${int.rest} Recovery\n`;
         }
       }
     });
     text += `\n`;
   } else {
     // Continuous run
-    text += `- ${session.distance}km ${session.type === WorkoutType.EASY ? '65% HR' : 'Steady'}\n\n`;
+    text += `- ${session.distance}km\n\n`;
   }
 
-  if (session.cooldown) {
-    text += `Cooldown\n- ${session.cooldown.includes('km') ? session.cooldown : '5m 50% HR'}\n`;
+  if (includeWarmupCooldown && session.cooldown) {
+    text += `Cooldown\n- ${session.cooldown}\n`;
   }
 
   return text;
