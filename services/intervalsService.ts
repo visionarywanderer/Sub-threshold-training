@@ -49,9 +49,29 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   const toSinglePaceToken = (pace: string): string => {
     const trimmed = (pace || '').trim();
     if (!trimmed) return '';
-    const first = trimmed.split('-')[0].trim();
-    if (!first) return '';
-    return first.includes('/km') ? first : `${first}/km`;
+    const value = trimmed.replace('/km', '').trim();
+    const parts = value.split('-').map((p) => p.trim()).filter(Boolean);
+    const toSec = (p: string): number => {
+      const [m, s] = p.split(':').map((n) => Number(n));
+      if (!Number.isFinite(m) || !Number.isFinite(s)) return 0;
+      return (m * 60) + s;
+    };
+    const toPace = (sec: number): string => {
+      const total = Math.max(0, Math.round(sec));
+      const m = Math.floor(total / 60);
+      const s = String(total % 60).padStart(2, '0');
+      return `${m}:${s}/km`;
+    };
+
+    if (parts.length === 0) return '';
+    if (parts.length === 1) {
+      return parts[0].includes('/km') ? parts[0] : `${parts[0]}/km`;
+    }
+
+    const a = toSec(parts[0]);
+    const b = toSec(parts[1]);
+    if (!a || !b) return `${parts[0]}/km`;
+    return toPace((a + b) / 2);
   };
 
   const extractEasyPaceFromDescription = (description: string): string => {
@@ -62,7 +82,9 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     const low = (m[1] || '').trim();
     const high = (m[2] || '').trim();
     if (!low) return '';
-    return high ? `${low}/km Pace (${low}-${high})` : `${low}/km Pace`;
+    if (!high) return `${low}/km Pace`;
+    const mid = toSinglePaceToken(`${low}-${high}`);
+    return `${mid} Pace`;
   };
 
   const hasStructuredIntervals = !!session.intervals?.some((int) => {
