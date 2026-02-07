@@ -40,18 +40,18 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (!value || value === '0') return '';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `Recovery ${kmMatch[1]}km`;
+    if (kmMatch) return `Rest ${kmMatch[1]}km`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
-    if (secMatch) return `Recovery ${secMatch[1]}s`;
+    if (secMatch) return `Rest ${secMatch[1]}s`;
 
     const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
-    if (minMatch) return `Recovery ${minMatch[1]}m`;
+    if (minMatch) return `Rest ${minMatch[1]}m`;
 
     const numericOnly = value.match(/^(\d+(?:\.\d+)?)$/);
-    if (numericOnly) return `Recovery ${numericOnly[1]}s`;
+    if (numericOnly) return `Rest ${numericOnly[1]}s`;
 
-    return `Recovery ${value}`;
+    return `Rest ${value}`;
   };
 
   const isPlaceholderStep = (raw?: string): boolean => {
@@ -98,8 +98,10 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     const low = (m[1] || '').trim();
     const high = (m[2] || '').trim();
     if (!low) return '';
-    if (!high) return `${low}/km Pace`;
-    return `${low}-${high}/km Pace`;
+    if (!high) return `@ ${low}/km`;
+    const paceRange = `${low}-${high}/km`;
+    const single = toSinglePaceFromRange(paceRange);
+    return single ? `@ ${single}` : `@ ${low}/km`;
   };
 
   const includeWarmup = !isPlaceholderStep(session.warmup);
@@ -125,12 +127,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
       const pace = toRangePaceToken(only.pace || '');
       const paceTarget = toSinglePaceFromRange(pace);
-      text += `Main Set\n- Run ${distStr}${paceTarget ? ` ${paceTarget} Pace` : ''}${pace ? ` (${pace})` : ''}\n\n`;
+      text += `Main Set\n- Run ${distStr}${paceTarget ? ` @ ${paceTarget}` : ''}\n\n`;
     } else {
       text += `Main Set\n`;
       session.intervals.forEach((int) => {
         const pace = toRangePaceToken(int.pace || '');
-        const effort = pace ? `${pace} Pace` : '';
+        const paceTarget = toSinglePaceFromRange(pace);
         const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
         const reps = Math.max(1, Number(int.count) || 1);
         const recoveryStep = normalizeRecoveryStep(int.rest || '');
@@ -138,10 +140,10 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
         if (reps > 1) {
           // Keep a compact repeat block so Garmin gets a repeat, not a long flat list.
           text += `${reps}x\n`;
-          text += `- Run ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          text += `- Run ${distStr}${paceTarget ? ` @ ${paceTarget}` : ''}\n`;
           if (recoveryStep) text += `- ${recoveryStep}\n`;
         } else {
-          text += `- Run ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          text += `- Run ${distStr}${paceTarget ? ` @ ${paceTarget}` : ''}\n`;
           if (recoveryStep) {
             text += `- ${recoveryStep}\n`;
           }
