@@ -40,18 +40,18 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (!value || value === '0') return '';
 
     const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
-    if (kmMatch) return `${kmMatch[1]}km Recovery`;
+    if (kmMatch) return `Recovery ${kmMatch[1]}km`;
 
     const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
-    if (secMatch) return `${secMatch[1]}s Rest`;
+    if (secMatch) return `Recovery ${secMatch[1]}s`;
 
     const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
-    if (minMatch) return `${minMatch[1]}m Rest`;
+    if (minMatch) return `Recovery ${minMatch[1]}m`;
 
     const numericOnly = value.match(/^(\d+(?:\.\d+)?)$/);
-    if (numericOnly) return `${numericOnly[1]}s Rest`;
+    if (numericOnly) return `Recovery ${numericOnly[1]}s`;
 
-    return `${value} Rest`;
+    return `Recovery ${value}`;
   };
 
   const isPlaceholderStep = (raw?: string): boolean => {
@@ -68,6 +68,26 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     if (parts.length === 0) return '';
     if (parts.length === 1) return `${parts[0]}/km`;
     return `${parts[0]}-${parts[1]}/km`;
+  };
+
+  const toSinglePaceFromRange = (pace: string): string => {
+    const trimmed = (pace || '').replace('/km', '').trim();
+    if (!trimmed) return '';
+    const parts = trimmed.split('-').map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return '';
+    if (parts.length === 1) return `${parts[0]}/km`;
+    const toSec = (p: string): number => {
+      const [m, s] = p.split(':').map((n) => Number(n));
+      if (!Number.isFinite(m) || !Number.isFinite(s)) return 0;
+      return (m * 60) + s;
+    };
+    const a = toSec(parts[0]);
+    const b = toSec(parts[1]);
+    if (!a || !b) return `${parts[0]}/km`;
+    const mid = Math.round((a + b) / 2);
+    const mm = Math.floor(mid / 60);
+    const ss = String(mid % 60).padStart(2, '0');
+    return `${mm}:${ss}/km`;
   };
 
   const extractEasyPaceFromDescription = (description: string): string => {
@@ -104,7 +124,8 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       const only = session.intervals[0];
       const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
       const pace = toRangePaceToken(only.pace || '');
-      text += `Main Set\n- ${distStr}${pace ? ` ${pace}` : ''}\n\n`;
+      const paceTarget = toSinglePaceFromRange(pace);
+      text += `Main Set\n- Run ${distStr}${paceTarget ? ` ${paceTarget} Pace` : ''}${pace ? ` (${pace})` : ''}\n\n`;
     } else {
       text += `Main Set\n`;
       session.intervals.forEach((int) => {
@@ -117,10 +138,10 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
         if (reps > 1) {
           // Keep a compact repeat block so Garmin gets a repeat, not a long flat list.
           text += `${reps}x\n`;
-          text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          text += `- Run ${distStr}${effort ? ` ${effort}` : ''}\n`;
           if (recoveryStep) text += `- ${recoveryStep}\n`;
         } else {
-          text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          text += `- Run ${distStr}${effort ? ` ${effort}` : ''}\n`;
           if (recoveryStep) {
             text += `- ${recoveryStep}\n`;
           }
@@ -130,7 +151,7 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     }
   } else {
     const easyPace = extractEasyPaceFromDescription(session.description || '');
-    text += `Main Set\n- ${session.distance}km${easyPace ? ` ${easyPace}` : ''}\n\n`;
+    text += `Main Set\n- Run ${session.distance}km${easyPace ? ` ${easyPace}` : ''}\n\n`;
   }
 
   if (includeCooldown && session.cooldown) {
