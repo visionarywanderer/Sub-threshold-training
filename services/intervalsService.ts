@@ -5,6 +5,14 @@ import { WorkoutSession, IntervalsIcuConfig, WorkoutType } from '../types';
  * Focuses strictly on running metrics.
  */
 const formatIcuWorkoutText = (session: WorkoutSession): string => {
+  const toSinglePace = (pace: string): string => {
+    const trimmed = (pace || '').trim();
+    if (!trimmed) return '';
+    if (!trimmed.includes('-')) return trimmed;
+    const [start] = trimmed.split('-');
+    return start.trim();
+  };
+
   let text = `${session.title}\n\n`;
 
   if (session.warmup) {
@@ -14,7 +22,8 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   if (session.intervals && session.intervals.length > 0) {
     text += `Main Set\n`;
     session.intervals.forEach((int) => {
-      const effort = int.pace ? `${int.pace}/km` : "Sub-T";
+      const singlePace = toSinglePace(int.pace || '');
+      const effort = singlePace ? `${singlePace}/km` : "Sub-T";
       const distStr = int.distance > 0 ? (int.distance < 1000 ? `${int.distance}m` : `${int.distance / 1000}km`) : "";
       const reps = Math.max(1, Number(int.count) || 1);
 
@@ -49,8 +58,8 @@ const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
     category: 'WORKOUT',
     type: getIcuType(session.type),
     name: session.title,
-    description: session.description,
-    start_date_local: `${date}T08:00:00`,
+    // Intervals API is more reliable with minimal event payload on create/update.
+    start_date_local: `${date}T00:00:00`,
     workout: icuWorkout,
     moving_time: session.duration * 60
   };
@@ -175,7 +184,7 @@ export const syncRestDayToIcu = async (
     type: 'Run',
     name: 'Rest Day',
     description: 'Recovery / no training scheduled.',
-    start_date_local: `${date}T08:00:00`
+    start_date_local: `${date}T00:00:00`
   };
 
   try {
