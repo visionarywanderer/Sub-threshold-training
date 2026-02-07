@@ -5,6 +5,14 @@ import { WorkoutSession, IntervalsIcuConfig, WorkoutType } from '../types';
  * Focuses strictly on running metrics.
  */
 const formatIcuWorkoutText = (session: WorkoutSession): string => {
+  const toSinglePaceToken = (pace: string): string => {
+    const trimmed = (pace || '').trim();
+    if (!trimmed) return '';
+    const first = trimmed.split('-')[0].trim();
+    if (!first) return '';
+    return first.includes('/km') ? first : `${first}/km`;
+  };
+
   const toPaceToken = (pace: string): string => {
     const trimmed = (pace || '').trim();
     if (!trimmed) return '';
@@ -27,6 +35,13 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   }
 
   if (session.intervals && session.intervals.length > 0) {
+    // Easy/steady single sessions should stay a single export step for Garmin compatibility.
+    if (session.type !== WorkoutType.THRESHOLD && session.intervals.length === 1) {
+      const only = session.intervals[0];
+      const distStr = only.distance > 0 ? (only.distance < 1000 ? `${only.distance}m` : `${only.distance / 1000}km`) : `${session.distance}km`;
+      const pace = toSinglePaceToken(only.pace || '');
+      text += `Main Set\n- ${distStr}${pace ? ` ${pace} Pace` : ''}\n\n`;
+    } else {
     text += `Main Set\n`;
     session.intervals.forEach((int) => {
       const paceToken = toPaceToken(int.pace || '');
@@ -38,11 +53,12 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       for (let rep = 0; rep < reps; rep++) {
         text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
         if (int.rest && int.rest !== "0" && rep < reps - 1) {
-          text += `- ${int.rest} Recovery\n`;
+          text += `- ${int.rest} Easy Recovery\n`;
         }
       }
     });
     text += `\n`;
+    }
   } else {
     // Continuous run
     text += `- ${session.distance}km\n\n`;
@@ -188,10 +204,10 @@ export const syncRestDayToIcu = async (
 
   const auth = btoa(`API_KEY:${config.apiKey}`);
   const payload = {
-    category: 'NOTE',
+    category: 'WORKOUT',
     type: 'Run',
     name: 'Rest Day',
-    description: 'Recovery / no training scheduled.',
+    description: 'Rest Day\n\nMain Set\n- 20m Easy Recovery\n',
     start_date_local: `${date}T00:00:00`
   };
 

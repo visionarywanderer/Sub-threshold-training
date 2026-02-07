@@ -528,8 +528,10 @@ const App: React.FC = () => {
                         }}
                         onUpdateSession={(updated: WorkoutSession) => {
                           const newDays = [...plan.days];
-                          newDays[idx].session = updated;
-                          newDays[idx].icuEventId = undefined;
+                          const existingEventId = day.session?.icuEventId;
+                          newDays[idx].session = existingEventId
+                            ? { ...updated, icuEventId: existingEventId }
+                            : updated;
                           setPlan({ ...plan, days: newDays });
                         }}
                       />
