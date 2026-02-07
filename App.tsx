@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession } from './types';
-import { applyPaceCorrection, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
+import { applyPaceCorrection, calculateVDOTFromRace, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
 import { syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import SortableDayItem from './components/SortableDayItem';
-import { MoreHorizontal, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun, Moon, Sun } from 'lucide-react';
+import { Settings, X, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun, Moon, Sun } from 'lucide-react';
 import { DndContext, DragEndEvent, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 
@@ -200,10 +200,38 @@ const App: React.FC = () => {
   };
 
   const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile);
+  const vdot = calculateVDOTFromRace(profile.raceDistance, profile.raceTime);
   const weatherPaceDeltaSec = weather
     ? getWeatherPaceDeltaSeconds(currentThreshold, weather.temperatureC, weather.humidityPct, weather.windKmh)
     : 0;
   const correctedThreshold = applyPaceCorrection(currentThreshold, weatherPaceDeltaSec);
+  const subThresholdIntervalKm = useMemo(() => {
+    if (!plan) return 0;
+    return plan.days.reduce((sum, day) => {
+      const session = day.session;
+      if (!session || !session.intervals?.length) return sum;
+
+      const isThresholdDay = session.type === WorkoutType.THRESHOLD;
+      const isFiveKmLongRunVariant = session.type === WorkoutType.LONG_RUN && (
+        session.id.includes('-blocks') || session.title.toLowerCase().includes('5km')
+      );
+
+      if (!isThresholdDay && !isFiveKmLongRunVariant) return sum;
+
+      const sessionIntervalKm = session.intervals.reduce((acc, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const distanceM = Math.max(0, Number(int.distance) || 0);
+        return acc + ((distanceM * reps) / 1000);
+      }, 0);
+
+      return sum + sessionIntervalKm;
+    }, 0);
+  }, [plan]);
+  const subThresholdPct = useMemo(() => {
+    const totalKm = plan?.totalDistance || 0;
+    if (totalKm <= 0) return 0;
+    return (subThresholdIntervalKm / totalKm) * 100;
+  }, [plan, subThresholdIntervalKm]);
 
   const handleGeneratePlan = () => {
     const normalized = normalizeTo5kProfile(profile);
@@ -308,22 +336,36 @@ const App: React.FC = () => {
 
       <main className="max-w-6xl mx-auto px-6 py-10">
         <section className="mb-12">
-            <section className="rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 shadow-sm px-6 py-6 md:px-8 md:py-7 mb-10">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+            <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 shadow-sm px-6 py-6 md:px-8 md:py-7 mb-10">
+              <div className="pointer-events-none absolute -top-16 -right-10 w-48 h-48 bg-norway-blue/8 dark:bg-norway-blue/15 rounded-full blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-20 -left-12 w-52 h-52 bg-emerald-400/10 dark:bg-emerald-300/10 rounded-full blur-2xl" />
+
+              <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
                   <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Threshold Works</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Plan volume {plan?.totalDistance || 0}km</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Plan volume {plan?.totalDistance || 0}km.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      VDOT {vdot > 0 ? vdot.toFixed(1) : '--'}
+                    </span>
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Sub-T {subThresholdIntervalKm.toFixed(1)}km
+                    </span>
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Sub-T {subThresholdPct.toFixed(1)}%
+                    </span>
+                  </div>
                 </div>
 
-                <div className="lg:text-center">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">SubT Pace</p>
-                  <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 font-medium">/km</span></p>
+                <div className="lg:text-center rounded-2xl border border-norway-blue/15 dark:border-norway-blue/30 bg-norway-blue/[0.04] dark:bg-norway-blue/[0.12] px-5 py-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Threshold Pace</p>
+                  <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 dark:text-slate-400 font-medium">/km</span></p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                     Base {secondsToTime(currentThreshold)}. Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km
                   </p>
                 </div>
 
-                <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-5 py-3 min-w-[250px]">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/95 dark:bg-slate-800/90 px-5 py-3 min-w-[250px]">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Weather</p>
@@ -363,7 +405,7 @@ const App: React.FC = () => {
                    </div>
                  )}
                  <button onClick={() => setActiveTab('settings')} className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-500 dark:text-slate-300 hover:text-norway-blue hover:border-norway-blue transition-all shadow-sm">
-                   <MoreHorizontal size={20}/>
+                   <Settings size={20}/>
                  </button>
               </div>
             </div>
@@ -421,7 +463,7 @@ const App: React.FC = () => {
                  <div className="max-w-2xl mx-auto space-y-10">
                     <div className="flex justify-between items-center sticky top-0 bg-white/10 dark:bg-slate-950/10 py-4 z-10">
                         <h2 className="text-3xl font-bold text-norway-blue tracking-tight">Plan Config</h2>
-                        <button onClick={() => setActiveTab('plan')} className="w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-slate-700"><MoreHorizontal size={24}/></button>
+                        <button onClick={() => setActiveTab('plan')} className="w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-slate-700"><X size={20}/></button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">

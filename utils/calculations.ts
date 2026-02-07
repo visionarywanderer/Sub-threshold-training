@@ -70,6 +70,24 @@ export const calculatePaceForDistance = (
   return predictedSeconds / (targetDistMeters / 1000);
 };
 
+export const calculateVDOTFromRace = (raceDistMeters: number, raceTimeStr: string): number => {
+  const tSec = timeToSeconds(raceTimeStr);
+  if (!raceDistMeters || !tSec || tSec <= 0) return 0;
+
+  const timeMin = tSec / 60;
+  const velocityMPerMin = raceDistMeters / timeMin;
+
+  // Jack Daniels VO2 approximation based on running velocity.
+  const vo2 = -4.60 + (0.182258 * velocityMPerMin) + (0.000104 * velocityMPerMin * velocityMPerMin);
+
+  // Fraction of VO2max sustained for race duration.
+  const percent = 0.80 + (0.1894393 * Math.exp(-0.012778 * timeMin)) + (0.2989558 * Math.exp(-0.1932605 * timeMin));
+  if (percent <= 0) return 0;
+
+  const vdot = vo2 / percent;
+  return Math.round(vdot * 10) / 10;
+};
+
 const getRaceEquivalentPaces = (profile: UserProfile) => {
   const p15k = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 15000);
   const pHalf = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 21097);
@@ -246,6 +264,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   const tPace = applyPaceCorrection(calculateThresholdPace(profile.raceDistance, profile.raceTime, profile as any), correctionSec);
   const easyRange = getEasyRunPaceRange(profile, correctionSec);
   const easyPace = easyRange.center;
+  const easyRangeText = `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
   const targetVolume = profile.weeklyVolume;
   const wu = profile.warmupDist;
   const cd = profile.cooldownDist;
@@ -296,7 +315,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         distance: lrDist,
         duration: Math.round(lrDist * (easyPace / 60)),
         description: `Continuous easy effort. Aerobic base focus.`,
-        intervals: [{ distance: lrDist * 1000, count: 1, pace: secondsToTime(easyPace), rest: '0', description: 'Easy' }],
+        intervals: [{ distance: lrDist * 1000, count: 1, pace: easyRangeText, rest: '0', description: 'Easy' }],
         warmup: 'Direct start', cooldown: 'Walk off'
       },
       {

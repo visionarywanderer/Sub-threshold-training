@@ -165,8 +165,23 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       const easyRange = getEasyRunPaceRange(profile, paceCorrectionSec);
       return `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
     }
+    if (isLongRun && currentSession.title.toLowerCase().includes('easy')) {
+      const easyRange = getEasyRunPaceRange(profile, paceCorrectionSec);
+      return `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
+    }
     const mp = applyPaceCorrection(calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195), paceCorrectionSec);
     return secondsToTime(mp);
+  };
+
+  const getIntervalDisplayPace = (distanceMeters: number, paceFromSession?: string) => {
+    if (isThreshold) {
+      return getIntervalPaceRange(profile, Number(distanceMeters), paceCorrectionSec).range;
+    }
+    // For long runs and other sessions, keep the pace defined by the selected variant/session.
+    if (paceFromSession && paceFromSession.trim().length > 0) {
+      return paceFromSession;
+    }
+    return getIntervalPaceRange(profile, Number(distanceMeters), paceCorrectionSec).range;
   };
 
   return (
@@ -334,7 +349,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                     <div key={idx} className="text-xs text-slate-700 bg-white border border-slate-200 rounded-xl p-2.5">
                       <span className="font-semibold">{int.count} × {int.distance}m</span>
                       <span className="mx-2 text-slate-400">·</span>
-                      <span>{getIntervalPaceRange(profile, Number(int.distance), paceCorrectionSec).range}/km</span>
+                      <span>{getIntervalDisplayPace(Number(int.distance), int.pace)}/km</span>
                       <span className="mx-2 text-slate-400">·</span>
                       <span>Rest {int.rest}</span>
                     </div>
