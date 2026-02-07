@@ -54,6 +54,17 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     return first.includes('/km') ? first : `${first}/km`;
   };
 
+  const extractEasyPaceFromDescription = (description: string): string => {
+    const text = (description || '').trim();
+    if (!text) return '';
+    const m = text.match(/Target Pace:\s*([0-9]+:[0-9]{2})(?:-([0-9]+:[0-9]{2}))?\/km/i);
+    if (!m) return '';
+    const low = (m[1] || '').trim();
+    const high = (m[2] || '').trim();
+    if (!low) return '';
+    return high ? `${low}/km Pace (${low}-${high})` : `${low}/km Pace`;
+  };
+
   const hasStructuredIntervals = !!session.intervals?.some((int) => {
     const reps = Math.max(1, Number(int.count) || 1);
     const hasRest = !!int.rest && int.rest !== '0';
@@ -85,16 +96,10 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
         const recoveryStep = normalizeRecoveryStep(int.rest || '');
 
         if (reps > 1) {
-          // Repeat blocks preserve workout structure better than flattening all reps.
-          if (recoveryStep) {
-            text += `${Math.max(1, reps - 1)}x\n`;
-            text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
-            text += `- ${recoveryStep}\n`;
-            text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
-          } else {
-            text += `${reps}x\n`;
-            text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
-          }
+          // Keep a compact repeat block so Garmin gets a repeat, not a long flat list.
+          text += `${reps}x\n`;
+          text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          if (recoveryStep) text += `- ${recoveryStep}\n`;
         } else {
           text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
           if (recoveryStep) {
@@ -105,7 +110,8 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       text += `\n`;
     }
   } else {
-    text += `Main Set\n- ${session.distance}km\n\n`;
+    const easyPace = extractEasyPaceFromDescription(session.description || '');
+    text += `Main Set\n- ${session.distance}km${easyPace ? ` ${easyPace}` : ''}\n\n`;
   }
 
   if (includeWarmupCooldown && session.cooldown) {
