@@ -5,19 +5,53 @@ import { WorkoutSession, IntervalsIcuConfig, WorkoutType } from '../types';
  * Focuses strictly on running metrics.
  */
 const formatIcuWorkoutText = (session: WorkoutSession): string => {
+  const kmTokenFromMeters = (meters: number): string => {
+    const km = Math.max(0, Number(meters) || 0) / 1000;
+    const rounded = Math.round(km * 1000) / 1000;
+    return `${rounded}km`;
+  };
+
+  const normalizeEasyStep = (raw: string): string => {
+    const value = (raw || '').trim();
+    if (!value) return '10m Z2 Pace';
+
+    const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
+    if (kmMatch) return `${kmMatch[1]}km Z2 Pace`;
+
+    const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
+    if (secMatch) return `${secMatch[1]}s Easy`;
+
+    const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
+    if (minMatch) return `${minMatch[1]}m Easy`;
+
+    return value;
+  };
+
+  const normalizeRecoveryStep = (raw: string): string => {
+    const value = (raw || '').trim();
+    if (!value || value === '0') return '';
+
+    const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
+    if (kmMatch) return `${kmMatch[1]}km Z2 Pace`;
+
+    const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
+    if (secMatch) return `${secMatch[1]}s Easy`;
+
+    const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
+    if (minMatch) return `${minMatch[1]}m Easy`;
+
+    const numericOnly = value.match(/^(\d+(?:\.\d+)?)$/);
+    if (numericOnly) return `${numericOnly[1]}s Easy`;
+
+    return `${value} Easy`;
+  };
+
   const toSinglePaceToken = (pace: string): string => {
     const trimmed = (pace || '').trim();
     if (!trimmed) return '';
     const first = trimmed.split('-')[0].trim();
     if (!first) return '';
     return first.includes('/km') ? first : `${first}/km`;
-  };
-
-  const toPaceToken = (pace: string): string => {
-    const trimmed = (pace || '').trim();
-    if (!trimmed) return '';
-    if (trimmed.includes('/km')) return trimmed;
-    return `${trimmed}/km`;
   };
 
   const hasStructuredIntervals = !!session.intervals?.some((int) => {
@@ -31,41 +65,51 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   let text = `${session.title}\n\n`;
 
   if (includeWarmupCooldown && session.warmup) {
-    text += `Warmup\n- ${session.warmup}\n\n`;
+    text += `Warmup\n- ${normalizeEasyStep(session.warmup)}\n\n`;
   }
 
   if (session.intervals && session.intervals.length > 0) {
-    // Easy/steady single sessions should stay a single export step for Garmin compatibility.
     if (session.type !== WorkoutType.THRESHOLD && session.intervals.length === 1) {
+      // Easy/steady/long single-session workouts must stay one step for Garmin sync.
       const only = session.intervals[0];
-      const distStr = only.distance > 0 ? (only.distance < 1000 ? `${only.distance}m` : `${only.distance / 1000}km`) : `${session.distance}km`;
+      const distStr = only.distance > 0 ? kmTokenFromMeters(only.distance) : `${session.distance}km`;
       const pace = toSinglePaceToken(only.pace || '');
       text += `Main Set\n- ${distStr}${pace ? ` ${pace} Pace` : ''}\n\n`;
     } else {
-    text += `Main Set\n`;
-    session.intervals.forEach((int) => {
-      const paceToken = toPaceToken(int.pace || '');
-      const effort = paceToken ? `${paceToken} Pace` : "";
-      const distStr = int.distance > 0 ? (int.distance < 1000 ? `${int.distance}m` : `${int.distance / 1000}km`) : "";
-      const reps = Math.max(1, Number(int.count) || 1);
+      text += `Main Set\n`;
+      session.intervals.forEach((int) => {
+        const pace = toSinglePaceToken(int.pace || '');
+        const effort = pace ? `${pace} Pace` : '';
+        const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
+        const reps = Math.max(1, Number(int.count) || 1);
+        const recoveryStep = normalizeRecoveryStep(int.rest || '');
 
-      // Expand each rep into an explicit step so Intervals.icu can forward clean step data to Garmin.
-      for (let rep = 0; rep < reps; rep++) {
-        text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
-        if (int.rest && int.rest !== "0" && rep < reps - 1) {
-          text += `- ${int.rest} Easy Recovery\n`;
+        if (reps > 1) {
+          // Repeat blocks preserve workout structure better than flattening all reps.
+          if (recoveryStep) {
+            text += `${Math.max(1, reps - 1)}x\n`;
+            text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+            text += `- ${recoveryStep}\n`;
+            text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          } else {
+            text += `${reps}x\n`;
+            text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          }
+        } else {
+          text += `- ${distStr}${effort ? ` ${effort}` : ''}\n`;
+          if (recoveryStep) {
+            text += `- ${recoveryStep}\n`;
+          }
         }
-      }
-    });
-    text += `\n`;
+      });
+      text += `\n`;
     }
   } else {
-    // Continuous run
-    text += `- ${session.distance}km\n\n`;
+    text += `Main Set\n- ${session.distance}km\n\n`;
   }
 
   if (includeWarmupCooldown && session.cooldown) {
-    text += `Cooldown\n- ${session.cooldown}\n`;
+    text += `Cooldown\n- ${normalizeEasyStep(session.cooldown)}\n`;
   }
 
   return text;
