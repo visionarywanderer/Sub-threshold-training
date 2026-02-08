@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
 import { applyPaceCorrection, calculateVDOTFromRace, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
 import { syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
@@ -64,6 +64,8 @@ interface WeatherSnapshot {
 type ThemeMode = 'light' | 'dark';
 
 const App: React.FC = () => {
+  const googleInitializedRef = useRef(false);
+  const googleButtonRenderedRef = useRef(false);
   const [profile, setProfile] = useState<UserProfile>(EMPTY_RUN_PROFILE);
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
   const [activeTab, setActiveTab] = useState<'plan' | 'pacing' | 'settings'>('plan'); 
@@ -166,27 +168,54 @@ const App: React.FC = () => {
       setPlan(generatePlan(nextProfile, 0));
       setIntervalsConfig(savedIcu ? JSON.parse(savedIcu) : { athleteId: '', apiKey: '', connected: false });
       setIsAuthenticated(true);
+      googleButtonRenderedRef.current = false;
     }
   }, []);
 
   useEffect(() => {
-    const initGoogle = () => {
-      if (!GOOGLE_CLIENT_ID) return;
-      if (typeof window.google !== 'undefined' && window.google.accounts) {
+    if (!GOOGLE_CLIENT_ID || isAuthenticated) return;
+
+    const tryInitAndRender = (): boolean => {
+      if (typeof window.google === 'undefined' || !window.google.accounts?.id) return false;
+
+      if (!googleInitializedRef.current) {
         window.google.accounts.id.initialize({
           client_id: GOOGLE_CLIENT_ID,
           callback: handleCredentialResponse,
           auto_select: false,
           cancel_on_tap_outside: true,
-          use_fedcm_for_prompt: false, 
+          use_fedcm_for_prompt: false,
         });
-        const btnContainer = document.getElementById('google-login-btn');
-        if (btnContainer && !isAuthenticated) {
-          window.google.accounts.id.renderButton(btnContainer, { theme: 'outline', size: 'large', shape: 'pill', width: 200 });
-        }
+        googleInitializedRef.current = true;
       }
+
+      const btnContainer = document.getElementById('google-login-btn');
+      if (!btnContainer) return false;
+
+      if (!googleButtonRenderedRef.current || btnContainer.childElementCount === 0) {
+        btnContainer.innerHTML = '';
+        window.google.accounts.id.renderButton(btnContainer, {
+          theme: 'outline',
+          size: 'large',
+          shape: 'pill',
+          width: 200,
+        });
+        googleButtonRenderedRef.current = true;
+      }
+
+      return true;
     };
-    const interval = setInterval(initGoogle, 500);
+
+    if (tryInitAndRender()) return;
+
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts += 1;
+      if (tryInitAndRender() || attempts >= 80) {
+        clearInterval(interval);
+      }
+    }, 250);
+
     return () => clearInterval(interval);
   }, [handleCredentialResponse, isAuthenticated]);
 
@@ -203,6 +232,7 @@ const App: React.FC = () => {
     setProfile(EMPTY_RUN_PROFILE);
     setPlan(generatePlan(EMPTY_RUN_PROFILE, weatherPaceDeltaSec));
     setIntervalsConfig({ athleteId: '', apiKey: '', connected: false });
+    googleButtonRenderedRef.current = false;
     if (window.google) window.google.accounts.id.disableAutoSelect();
   };
 
