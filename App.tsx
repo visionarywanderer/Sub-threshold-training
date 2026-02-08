@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
 import { applyPaceCorrection, calculateVDOTFromRace, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
-import { deleteWorkoutFromIcu, syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
+import { deleteWorkoutFromIcu, syncWorkoutToIcu, syncWorkoutsBulkToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
@@ -285,13 +285,13 @@ const App: React.FC = () => {
     if (!plan || !intervalsConfig.connected || !isAuthenticated) return;
     setSyncStatus('syncing');
     setSyncMessage('');
-
-    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const workoutDayCount = plan.days.filter((d) => !!d.session).length;
     
     try {
       const newDays = [...plan.days];
       const failedDays: string[] = [];
-      let syncedCount = 0;
+      const workoutItems: Array<{ index: number; dayLabel: string; externalId: string; dateStr: string }> = [];
+
       for (let i = 0; i < newDays.length; i++) {
         const day = newDays[i];
         const targetDate = parseLocalDate(weekStartDate);
@@ -299,52 +299,58 @@ const App: React.FC = () => {
         const dateStr = formatLocalDate(targetDate);
         const dayLabel = WEEKDAY_ORDER[i] || day.day;
 
-        // Force fresh event creation on full-week schedule to avoid stale updates not propagating to Garmin.
-        const existingEventId = day.session?.icuEventId || day.icuEventId;
-        if (existingEventId) {
-          await deleteWorkoutFromIcu(intervalsConfig, existingEventId);
+        // User preference: do not write rest days to Intervals/Garmin.
+        if (!day.session) {
+          if (day.icuEventId) {
+            await deleteWorkoutFromIcu(intervalsConfig, day.icuEventId);
+          }
+          newDays[i] = { ...day, icuEventId: undefined };
+          continue;
         }
 
-        if (day.session) {
-          const freshSession = { ...day.session, icuEventId: undefined };
-          let result = await syncWorkoutToIcu(intervalsConfig, freshSession, dateStr);
-          if (!result.ok) {
-            await wait(350);
-            result = await syncWorkoutToIcu(intervalsConfig, freshSession, dateStr);
-          }
-          if (result.ok && result.eventId) {
-            newDays[i] = { ...day, session: { ...day.session, icuEventId: result.eventId }, icuEventId: undefined };
+        const externalId = `norskflow:${profile.uid || 'anon'}:${dateStr}:${i}`;
+        workoutItems.push({ index: i, dayLabel, externalId, dateStr });
+      }
+
+      const bulkResult = await syncWorkoutsBulkToIcu(
+        intervalsConfig,
+        workoutItems.map((w) => ({
+          externalId: w.externalId,
+          date: w.dateStr,
+          session: newDays[w.index].session!,
+        }))
+      );
+
+      if (!bulkResult.ok) {
+        setSyncStatus('error');
+        setSyncMessage(bulkResult.error || 'Failed to bulk sync workouts.');
+        return;
+      }
+
+      let syncedCount = 0;
+      for (const w of workoutItems) {
+        const eventId = bulkResult.eventIdsByExternalId[w.externalId];
+        if (eventId) {
+          const day = newDays[w.index];
+          if (day.session) {
+            newDays[w.index] = { ...day, session: { ...day.session, icuEventId: eventId }, icuEventId: undefined };
             syncedCount += 1;
-          } else {
-            failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
           }
         } else {
-          let result = await syncRestDayToIcu(intervalsConfig, dateStr, undefined);
-          if (!result.ok) {
-            await wait(350);
-            result = await syncRestDayToIcu(intervalsConfig, dateStr, undefined);
-          }
-          if (result.ok && result.eventId) {
-            newDays[i] = { ...day, icuEventId: result.eventId };
-            syncedCount += 1;
-          } else {
-            failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
-          }
+          failedDays.push(`${w.dayLabel}: missing event id from bulk response`);
         }
-
-        // Small spacing between writes helps downstream provider propagation when scheduling full week in one burst.
-        await wait(200);
       }
+
       setPlan({ ...plan, days: newDays });
       setStartDate(weekStartDate);
 
       if (failedDays.length === 0) {
         setSyncStatus('success');
-        setSyncMessage(`Scheduled ${syncedCount}/${newDays.length} days to Intervals.icu.`);
+        setSyncMessage(`Scheduled ${syncedCount}/${workoutDayCount} workouts to Intervals.icu.`);
         setShowScheduleWeekModal(false);
       } else {
         setSyncStatus('error');
-        setSyncMessage(`Scheduled ${syncedCount}/${newDays.length} days. Failed: ${failedDays.join(' | ')}`);
+        setSyncMessage(`Scheduled ${syncedCount}/${workoutDayCount} workouts. Failed: ${failedDays.join(' | ')}`);
       }
 
       setTimeout(() => {

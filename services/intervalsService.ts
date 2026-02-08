@@ -181,7 +181,7 @@ const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
     name: dynamicTitle,
     // Intervals.icu expects native workout text in "description" for planned workout parsing.
     description: icuWorkout,
-    start_date_local: `${date}T08:00:00`,
+    start_date_local: `${date}T00:00:00`,
     moving_time: movingTimeSec
   };
 };
@@ -191,6 +191,19 @@ export interface IcuSyncResult {
   eventId: number | null;
   status?: number;
   error?: string;
+}
+
+export interface IcuBulkSyncResult {
+  ok: boolean;
+  eventIdsByExternalId: Record<string, number>;
+  status?: number;
+  error?: string;
+}
+
+export interface BulkWorkoutInput {
+  session: WorkoutSession;
+  date: string;
+  externalId: string;
 }
 
 const extractErrorMessage = async (response: Response, fallback: string): Promise<string> => {
@@ -241,6 +254,62 @@ const parseAndResolveSuccessId = async (response: Response, existingId?: number)
     return resolveEventId(data, existingId);
   } catch {
     return existingId || null;
+  }
+};
+
+export const syncWorkoutsBulkToIcu = async (
+  config: IntervalsIcuConfig,
+  items: BulkWorkoutInput[]
+): Promise<IcuBulkSyncResult> => {
+  if (!config.connected || !config.apiKey) {
+    return { ok: false, eventIdsByExternalId: {}, error: 'Intervals.icu is not connected.' };
+  }
+
+  const auth = btoa(`API_KEY:${config.apiKey}`);
+  const payload = items.map((item) => ({
+    ...buildWorkoutPayload(item.session, item.date),
+    external_id: item.externalId,
+  }));
+
+  try {
+    const response = await fetch('https://intervals.icu/api/v1/athlete/0/events/bulk?upsert=true', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        eventIdsByExternalId: {},
+        status: response.status,
+        error: await extractErrorMessage(response, 'Failed to bulk sync workouts to Intervals.icu'),
+      };
+    }
+
+    const data = await response.json();
+    const arr = Array.isArray(data) ? data : [];
+    const eventIdsByExternalId: Record<string, number> = {};
+
+    for (const item of arr) {
+      const externalId = String(item?.external_id || '');
+      const eventId = Number(item?.id);
+      if (externalId && Number.isFinite(eventId) && eventId > 0) {
+        eventIdsByExternalId[externalId] = eventId;
+      }
+    }
+
+    return { ok: true, eventIdsByExternalId };
+  } catch (error) {
+    console.error('Intervals.icu Bulk Sync Error:', error);
+    return {
+      ok: false,
+      eventIdsByExternalId: {},
+      error: error instanceof Error ? error.message : 'Network error while bulk syncing workouts.',
+    };
   }
 };
 
@@ -305,7 +374,7 @@ export const syncRestDayToIcu = async (
     type: 'Run',
     name: 'Rest Day',
     description: 'Rest Day\n\nMain Set\n- 20m Easy Recovery\n',
-    start_date_local: `${date}T08:00:00`
+    start_date_local: `${date}T00:00:00`
   };
 
   try {
