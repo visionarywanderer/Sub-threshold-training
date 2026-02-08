@@ -3,8 +3,10 @@ import { WorkoutSession, IntervalsIcuConfig, WorkoutType } from '../types';
 
 interface FitStepSpec {
   wktStepName: string;
-  durationType: 'distance' | 'time';
+  durationType: 'distance' | 'time' | 'repeatUntilStepsCmplt';
   durationValue: number;
+  // Used for repeat steps (repeatUntilStepsCmplt): step index to repeat to.
+  targetValue?: number;
   targetType: 'speed' | 'open';
   customTargetValueLow?: number;
   customTargetValueHigh?: number;
@@ -162,14 +164,23 @@ const buildWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
 
       const reps = Math.max(1, Number(int.count) || 1);
       const recoveryDuration = parseDurationToFit(int.rest || '');
+      const blockStartIndex = steps.length;
 
-      for (let rep = 0; rep < reps; rep += 1) {
-        steps.push(buildFitStep('Run', repDuration, session.type === WorkoutType.THRESHOLD ? 'interval' : 'active', int.pace));
+      // Encode one rep pair + a FIT repeat step so Garmin shows repeats instead of flat duplicated steps.
+      steps.push(buildFitStep('Run', repDuration, 'active', int.pace));
+      if (recoveryDuration) {
+        steps.push(buildFitStep('Recover', recoveryDuration, 'rest'));
+      }
 
-        const hasNextRep = rep < reps - 1;
-        if (recoveryDuration && hasNextRep) {
-          steps.push(buildFitStep('Recovery', recoveryDuration, 'recovery'));
-        }
+      if (reps > 1) {
+        steps.push({
+          wktStepName: `Repeat ${reps}x`,
+          durationType: 'repeatUntilStepsCmplt',
+          durationValue: blockStartIndex,
+          targetType: 'open',
+          targetValue: reps,
+          intensity: 'active',
+        });
       }
     }
   } else {
@@ -248,7 +259,8 @@ const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
     category: 'WORKOUT',
     type: getIcuType(session.type),
     name: dynamicTitle,
-    start_date_local: `${date}T00:00:00`,
+    // Midday local avoids timezone/date rollover issues (e.g. missing Sunday on downstream sync).
+    start_date_local: `${date}T12:00:00`,
     moving_time: movingTimeSec,
     filename: `${sanitizeFilename(dynamicTitle)}.fit`,
     file_contents_base64: fileContentsBase64,
@@ -443,7 +455,7 @@ export const syncRestDayToIcu = async (
     type: 'Run',
     name: 'Rest Day',
     description: 'Rest Day',
-    start_date_local: `${date}T00:00:00`
+    start_date_local: `${date}T12:00:00`
   };
 
   try {
