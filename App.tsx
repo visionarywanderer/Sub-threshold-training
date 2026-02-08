@@ -285,6 +285,8 @@ const App: React.FC = () => {
     if (!plan || !intervalsConfig.connected || !isAuthenticated) return;
     setSyncStatus('syncing');
     setSyncMessage('');
+
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     
     try {
       const newDays = [...plan.days];
@@ -305,7 +307,11 @@ const App: React.FC = () => {
 
         if (day.session) {
           const freshSession = { ...day.session, icuEventId: undefined };
-          const result = await syncWorkoutToIcu(intervalsConfig, freshSession, dateStr);
+          let result = await syncWorkoutToIcu(intervalsConfig, freshSession, dateStr);
+          if (!result.ok) {
+            await wait(350);
+            result = await syncWorkoutToIcu(intervalsConfig, freshSession, dateStr);
+          }
           if (result.ok && result.eventId) {
             newDays[i] = { ...day, session: { ...day.session, icuEventId: result.eventId }, icuEventId: undefined };
             syncedCount += 1;
@@ -313,7 +319,11 @@ const App: React.FC = () => {
             failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
           }
         } else {
-          const result = await syncRestDayToIcu(intervalsConfig, dateStr, undefined);
+          let result = await syncRestDayToIcu(intervalsConfig, dateStr, undefined);
+          if (!result.ok) {
+            await wait(350);
+            result = await syncRestDayToIcu(intervalsConfig, dateStr, undefined);
+          }
           if (result.ok && result.eventId) {
             newDays[i] = { ...day, icuEventId: result.eventId };
             syncedCount += 1;
@@ -321,6 +331,9 @@ const App: React.FC = () => {
             failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
           }
         }
+
+        // Small spacing between writes helps downstream provider propagation when scheduling full week in one burst.
+        await wait(200);
       }
       setPlan({ ...plan, days: newDays });
       setStartDate(weekStartDate);
