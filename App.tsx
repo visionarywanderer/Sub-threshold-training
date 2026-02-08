@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
 import { applyPaceCorrection, calculateVDOTFromRace, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
-import { syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
+import { deleteWorkoutFromIcu, syncRestDayToIcu, syncWorkoutToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
@@ -297,8 +297,15 @@ const App: React.FC = () => {
         const dateStr = formatLocalDate(targetDate);
         const dayLabel = WEEKDAY_ORDER[i] || day.day;
 
+        // Force fresh event creation on full-week schedule to avoid stale updates not propagating to Garmin.
+        const existingEventId = day.session?.icuEventId || day.icuEventId;
+        if (existingEventId) {
+          await deleteWorkoutFromIcu(intervalsConfig, existingEventId);
+        }
+
         if (day.session) {
-          const result = await syncWorkoutToIcu(intervalsConfig, day.session, dateStr);
+          const freshSession = { ...day.session, icuEventId: undefined };
+          const result = await syncWorkoutToIcu(intervalsConfig, freshSession, dateStr);
           if (result.ok && result.eventId) {
             newDays[i] = { ...day, session: { ...day.session, icuEventId: result.eventId }, icuEventId: undefined };
             syncedCount += 1;
@@ -306,7 +313,7 @@ const App: React.FC = () => {
             failedDays.push(`${dayLabel}: ${result.error || 'unknown error'}`);
           }
         } else {
-          const result = await syncRestDayToIcu(intervalsConfig, dateStr, day.icuEventId);
+          const result = await syncRestDayToIcu(intervalsConfig, dateStr, undefined);
           if (result.ok && result.eventId) {
             newDays[i] = { ...day, icuEventId: result.eventId };
             syncedCount += 1;
