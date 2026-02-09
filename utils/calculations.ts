@@ -224,7 +224,7 @@ const getSinglesTargetPace = (
   // 5k reps -> Marathon pace
   // Shorter reps (400-1000) stay on the 15K anchor to avoid aggressive targets.
   let base = threshold60PaceSec;
-  let effort = "Threshold Pace";
+  let effort = "Subthreshold Pace";
 
   if (repDistanceMeters <= 450 && p15k > 0) {
     base = p15k - 9;

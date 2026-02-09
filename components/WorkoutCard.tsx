@@ -58,6 +58,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const isEasy = currentSession.type === WorkoutType.EASY;
   const isLongRun = currentSession.type === WorkoutType.LONG_RUN;
   const isThreshold = currentSession.type === WorkoutType.THRESHOLD;
+  const displayDayTypeLabel = dayTypeLabel.replace('Threshold', 'Subthreshold');
 
   const parseTimeToSec = (timeStr: string): number => {
     const cleaned = timeStr.trim();
@@ -324,7 +325,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
           <div className="flex items-center gap-2">
             <h3 className="text-[22px] leading-none font-semibold tracking-tight text-slate-900 dark:text-slate-100">{dayLabel}</h3>
             <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full ${tone.chip}`}>
-              {dayTypeLabel}
+              {displayDayTypeLabel}
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-300 mt-2">{displayTitle}</p>
@@ -410,7 +411,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-28"
                     />
                   </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-300">Threshold {thresholdPace}/km</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-300">Subthreshold {thresholdPace}/km</div>
                 </div>
               )}
 

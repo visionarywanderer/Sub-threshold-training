@@ -519,55 +519,6 @@ export const syncWorkoutToIcu = async (
   }
 };
 
-export const syncRestDayToIcu = async (
-  config: IntervalsIcuConfig,
-  date: string,
-  eventId?: number
-): Promise<IcuSyncResult> => {
-  if (!config.connected || !config.athleteId || !config.apiKey) {
-    return { ok: false, eventId: null, error: 'Intervals.icu is not connected.' };
-  }
-
-  const auth = btoa(`API_KEY:${config.apiKey}`);
-  const payload = {
-    category: 'WORKOUT',
-    type: 'Run',
-    name: 'Rest Day',
-    description: 'Rest Day',
-    start_date_local: `${date}T12:00:00`
-  };
-
-  try {
-    const method = eventId ? 'PUT' : 'POST';
-    const url = `https://intervals.icu/api/v1/athlete/${config.athleteId}/events${eventId ? `/${eventId}` : ''}`;
-    const response = await fetch(url, {
-      method,
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-      return {
-        ok: false,
-        eventId: null,
-        status: response.status,
-        error: await extractErrorMessage(response, 'Failed to sync rest day to Intervals.icu'),
-      };
-    }
-    const syncedEventId = await parseAndResolveSuccessId(response, eventId);
-    return { ok: true, eventId: syncedEventId };
-  } catch (error) {
-    console.error('Intervals.icu Rest Day Sync Error:', error);
-    return {
-      ok: false,
-      eventId: null,
-      error: error instanceof Error ? error.message : 'Network error while syncing rest day.',
-    };
-  }
-};
-
 export const deleteWorkoutFromIcu = async (config: IntervalsIcuConfig, eventId: number): Promise<boolean> => {
   if (!config.connected || !eventId) return false;
   const auth = btoa(`API_KEY:${config.apiKey}`);

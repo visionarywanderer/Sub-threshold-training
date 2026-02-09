@@ -403,12 +403,12 @@ const App: React.FC = () => {
                 Norwegian Method Planner
               </h1>
               <p className="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-300 max-w-3xl">
-                Build and manage your week with threshold pacing, weather-adjusted guidance, editable workout steps, and Intervals.icu sync ready for Garmin.
+                Build and manage your week with subthreshold pacing, weather-adjusted guidance, editable workout steps, and Intervals.icu sync ready for Garmin.
               </p>
 
               <div className="mt-8 grid sm:grid-cols-2 gap-3 text-sm">
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Dynamic paces from your 5K benchmark + VDOT</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Weather-aware threshold adjustments with delta</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Weather-aware subthreshold adjustments with delta</div>
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Drag and drop weekly plan with editable sessions</div>
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Intervals.icu calendar sync with explicit workout steps</div>
               </div>
@@ -437,10 +437,12 @@ const App: React.FC = () => {
       <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-100 dark:border-slate-800 sticky top-0 z-40 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-6 bg-slate-800 rounded flex items-center justify-center relative shadow-sm">
-               <div className="absolute left-0 top-0 bottom-0 w-1/3 bg-norway-red rounded-l"></div>
+            <div className="w-10 h-10 rounded-2xl bg-norway-blue shadow-sm relative overflow-hidden border border-slate-200/60 dark:border-slate-700/80">
+               <div className="absolute left-0 top-0 bottom-0 w-1/4 bg-norway-red"></div>
+               <div className="absolute left-[28%] top-1/2 -translate-y-1/2 w-[62%] h-1.5 rounded-full bg-white/95"></div>
+               <div className="absolute left-[28%] top-[32%] w-1.5 h-[36%] rounded-full bg-white/95"></div>
             </div>
-            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">Threshold Works</h1>
+            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">Subthreshold Works</h1>
           </div>
           
           <div className="flex items-center gap-4">
@@ -476,23 +478,23 @@ const App: React.FC = () => {
 
               <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
-                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Threshold Works</h2>
+                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Subthreshold Works</h2>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Plan volume {plan?.totalDistance || 0}km.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
                       VDOT {vdot > 0 ? vdot.toFixed(1) : '--'}
                     </span>
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
-                      Sub-T {subThresholdIntervalKm.toFixed(1)}km
+                      Subthreshold {subThresholdIntervalKm.toFixed(1)}km
                     </span>
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
-                      Sub-T {subThresholdPct.toFixed(1)}%
+                      Subthreshold {subThresholdPct.toFixed(1)}%
                     </span>
                   </div>
                 </div>
 
                 <div className="lg:text-center rounded-2xl border border-norway-blue/15 dark:border-sky-500/30 bg-norway-blue/[0.04] dark:bg-sky-500/[0.12] px-5 py-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Threshold Pace</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Subthreshold Pace</p>
                   <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue dark:text-sky-300 mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 dark:text-slate-300 font-medium">/km</span></p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                     Base {secondsToTime(currentThreshold)}. Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km
