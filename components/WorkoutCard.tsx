@@ -91,22 +91,25 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const getTone = () => {
     if (dayTypeLabel.includes('Threshold')) {
       return {
-        shell: 'bg-rose-50/55 border-rose-200/70',
-        chip: 'bg-rose-100 text-rose-700',
-        pace: 'bg-rose-100/50 border-rose-200 text-rose-800',
+        shell: 'bg-white/95 dark:bg-slate-900/95 border-slate-200/80 dark:border-slate-700/90',
+        chip: 'bg-amber-50 text-amber-700 border border-amber-200/70 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800/60',
+        pace: 'bg-amber-50/70 border-amber-200/70 text-amber-900 dark:bg-amber-900/25 dark:border-amber-800/70 dark:text-amber-100',
+        accent: 'bg-amber-400/90 dark:bg-amber-500/90',
       };
     }
     if (dayTypeLabel.includes('Long')) {
       return {
-        shell: 'bg-indigo-50/55 border-indigo-200/70',
-        chip: 'bg-indigo-100 text-indigo-700',
-        pace: 'bg-indigo-100/50 border-indigo-200 text-indigo-800',
+        shell: 'bg-white/95 dark:bg-slate-900/95 border-slate-200/80 dark:border-slate-700/90',
+        chip: 'bg-blue-50 text-blue-700 border border-blue-200/70 dark:bg-blue-900/30 dark:text-blue-200 dark:border-blue-800/60',
+        pace: 'bg-blue-50/70 border-blue-200/70 text-blue-900 dark:bg-blue-900/25 dark:border-blue-800/70 dark:text-blue-100',
+        accent: 'bg-blue-400/90 dark:bg-blue-500/90',
       };
     }
     return {
-      shell: 'bg-emerald-50/55 border-emerald-200/70',
-      chip: 'bg-emerald-100 text-emerald-700',
-      pace: 'bg-emerald-100/50 border-emerald-200 text-emerald-800',
+      shell: 'bg-white/95 dark:bg-slate-900/95 border-slate-200/80 dark:border-slate-700/90',
+      chip: 'bg-teal-50 text-teal-700 border border-teal-200/70 dark:bg-teal-900/30 dark:text-teal-200 dark:border-teal-800/60',
+      pace: 'bg-teal-50/70 border-teal-200/70 text-teal-900 dark:bg-teal-900/25 dark:border-teal-800/70 dark:text-teal-100',
+      accent: 'bg-teal-400/90 dark:bg-teal-500/90',
     };
   };
   const tone = getTone();
@@ -314,16 +317,17 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   };
 
   return (
-    <article className={`border rounded-2xl shadow-sm hover:shadow-md transition-shadow dark:bg-slate-900/90 dark:border-slate-700 ${tone.shell}`}>
-      <div className="px-5 py-4 border-b border-slate-200/80 dark:border-slate-700 flex items-start justify-between gap-4">
+    <article className={`relative overflow-hidden border rounded-3xl shadow-[0_1px_0_0_rgba(15,23,42,0.05),0_10px_24px_-18px_rgba(15,23,42,0.35)] hover:shadow-[0_1px_0_0_rgba(15,23,42,0.07),0_18px_30px_-20px_rgba(15,23,42,0.42)] transition-all ${tone.shell}`}>
+      <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${tone.accent}`} />
+      <div className="px-6 py-5 border-b border-slate-200/80 dark:border-slate-700/80 flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{dayLabel}</h3>
-            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${tone.chip}`}>
+            <h3 className="text-[22px] leading-none font-semibold tracking-tight text-slate-900 dark:text-slate-100">{dayLabel}</h3>
+            <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full ${tone.chip}`}>
               {dayTypeLabel}
             </span>
           </div>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{displayTitle}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-300 mt-2">{displayTitle}</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -332,7 +336,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
           </span>
           <button
             onClick={() => onSync(currentSession)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-semibold hover:bg-slate-800 dark:hover:bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-semibold hover:bg-slate-800 dark:hover:bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
           >
             <RefreshCw size={12} />
             Sync
@@ -359,28 +363,28 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
         </div>
       </div>
 
-      {cardOpen && <div className="px-5 py-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3.5 py-3">
+      {cardOpen && <div className="px-6 py-5">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          <div className="rounded-2xl bg-slate-50/85 dark:bg-slate-800/85 border border-slate-200/80 dark:border-slate-700/90 px-4 py-3.5">
             <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">Distance</p>
             <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{currentSession.distance} km</p>
           </div>
-          <div className="rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3.5 py-3">
+          <div className="rounded-2xl bg-slate-50/85 dark:bg-slate-800/85 border border-slate-200/80 dark:border-slate-700/90 px-4 py-3.5">
             <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">Est. Time</p>
             <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{formatDuration(currentSession.duration || 0)}</p>
           </div>
-          <div className={`rounded-xl border px-3.5 py-3 ${tone.pace}`}>
+          <div className={`rounded-2xl border px-4 py-3.5 ${tone.pace}`}>
             <p className="text-[10px] uppercase tracking-wide font-semibold">Target Pace</p>
-            <p className="text-lg font-bold mt-1">{getPrimaryPaceRange()}/km</p>
-            <p className="text-[11px] mt-1 opacity-75">Ideal: {getIdealPaceRange()}/km</p>
+            <p className="text-xl font-bold mt-1 leading-none">{getPrimaryPaceRange()}/km</p>
+            <p className="text-[11px] mt-1.5 opacity-80">Ideal: {getIdealPaceRange()}/km</p>
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="mt-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/90 overflow-hidden bg-white/65 dark:bg-slate-900/70">
           <button
             type="button"
             onClick={() => setDetailsOpen((prev) => !prev)}
-            className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 text-left text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            className="w-full px-4 py-3 bg-slate-50/85 dark:bg-slate-800/85 text-left text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100/90 dark:hover:bg-slate-700/85 transition-colors"
           >
             Session details {detailsOpen ? '−' : '+'}
           </button>
