@@ -9,10 +9,11 @@ interface FitStepSpec {
   targetValue?: number;
   customTargetValueLow?: number;
   customTargetValueHigh?: number;
-  intensity: 'active' | 'rest' | 'warmup' | 'cooldown' | 'recovery' | 'interval' | 'other';
+  intensity?: 'active' | 'rest' | 'warmup' | 'cooldown' | 'recovery' | 'interval' | 'other';
 }
 
 const PLACEHOLDER_STEP_VALUES = new Set(['', '0', 'n/a', 'na', 'direct start', 'walk off', 'none']);
+const ICU_GARMIN_SAFE_INTENSITY = String(import.meta.env.VITE_ICU_GARMIN_SAFE_INTENSITY ?? 'true').toLowerCase() !== 'false';
 
 const getDynamicTitle = (session: WorkoutSession): string => {
   if (session.type !== WorkoutType.THRESHOLD || !session.intervals?.length) return session.title;
@@ -155,9 +156,17 @@ const parseDurationToFit = (raw?: string): { durationType: 'distance' | 'time'; 
 const buildFitStep = (
   name: string,
   duration: { durationType: 'distance' | 'time'; durationValue: number },
-  intensity: FitStepSpec['intensity'],
+  intensity: NonNullable<FitStepSpec['intensity']>,
   paceRange?: string
 ): FitStepSpec => {
+  const safeIntensity = (() => {
+    // Compatibility mode: avoid known problematic active/interval mapping that can appear as "Other" in Garmin.
+    if (!ICU_GARMIN_SAFE_INTENSITY) return intensity;
+    if (intensity === 'interval' || intensity === 'active') return undefined;
+    if (intensity === 'recovery') return 'rest';
+    return intensity;
+  })();
+
   const speed = parsePaceRangeToSpeedRaw(paceRange);
   if (!speed) {
     return {
@@ -165,7 +174,7 @@ const buildFitStep = (
       durationType: duration.durationType,
       durationValue: duration.durationValue,
       targetType: 'open',
-      intensity,
+      intensity: safeIntensity,
     };
   }
 
@@ -176,7 +185,7 @@ const buildFitStep = (
     targetType: 'speed',
     customTargetValueLow: speed.low,
     customTargetValueHigh: speed.high,
-    intensity,
+    intensity: safeIntensity,
   };
 };
 
@@ -210,7 +219,7 @@ const buildFitWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
           durationValue: blockStart,
           targetType: 'open',
           targetValue: reps,
-          intensity: 'active',
+          intensity: ICU_GARMIN_SAFE_INTENSITY ? undefined : 'active',
         });
       }
     }
