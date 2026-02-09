@@ -437,12 +437,21 @@ const App: React.FC = () => {
       <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-100 dark:border-slate-800 sticky top-0 z-40 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-norway-blue shadow-sm relative overflow-hidden border border-slate-200/60 dark:border-slate-700/80">
-               <div className="absolute left-0 top-0 bottom-0 w-1/4 bg-norway-red"></div>
-               <div className="absolute left-[28%] top-1/2 -translate-y-1/2 w-[62%] h-1.5 rounded-full bg-white/95"></div>
-               <div className="absolute left-[28%] top-[32%] w-1.5 h-[36%] rounded-full bg-white/95"></div>
+            <div className="w-10 h-10 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/80 shadow-sm flex items-center justify-center">
+              <svg
+                viewBox="0 0 24 24"
+                className="w-6 h-6 text-norway-red"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2 12h4l2-4 3 8 2-4h9" />
+              </svg>
             </div>
-            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">Subthreshold Works</h1>
+            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">NorskFlow Run</h1>
           </div>
           
           <div className="flex items-center gap-4">
