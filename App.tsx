@@ -487,7 +487,7 @@ const App: React.FC = () => {
 
               <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
-                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Subthreshold Works</h2>
+                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">NorskFlow Run</h2>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Plan volume {plan?.totalDistance || 0}km.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
