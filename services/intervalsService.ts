@@ -5,9 +5,8 @@ interface FitStepSpec {
   wktStepName: string;
   durationType: 'distance' | 'time' | 'repeatUntilStepsCmplt';
   durationValue: number;
-  // Used for repeat steps (repeatUntilStepsCmplt): step index to repeat to.
-  targetValue?: number;
   targetType: 'speed' | 'open';
+  targetValue?: number;
   customTargetValueLow?: number;
   customTargetValueHigh?: number;
   intensity: 'active' | 'rest' | 'warmup' | 'cooldown' | 'recovery' | 'interval' | 'other';
@@ -26,6 +25,72 @@ const getDynamicTitle = (session: WorkoutSession): string => {
 
 const getIcuType = (_type: WorkoutType): string => 'Run';
 
+const isPlaceholderStep = (raw?: string): boolean => {
+  const value = (raw || '').trim().toLowerCase();
+  return PLACEHOLDER_STEP_VALUES.has(value);
+};
+
+const kmTokenFromMeters = (meters: number): string => {
+  const km = Math.max(0, Number(meters) || 0) / 1000;
+  const rounded = Math.round(km * 1000) / 1000;
+  return `${rounded}km`;
+};
+
+const normalizePaceRange = (pace: string): string => {
+  const cleaned = (pace || '').replace(/\/km/gi, '').replace(/pace/gi, '').trim();
+  if (!cleaned) return '';
+  const parts = cleaned.split('-').map((p) => p.trim()).filter(Boolean);
+  if (!parts.length) return '';
+  if (parts.length === 1) return `${parts[0]}/km`;
+  return `${parts[0]}-${parts[1]}/km`;
+};
+
+const normalizeEasyStep = (raw: string): string => {
+  const value = (raw || '').trim();
+  if (!value) return '10m easy run';
+
+  const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
+  if (kmMatch) return `${kmMatch[1]}km easy run`;
+
+  const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
+  if (secMatch) return `${secMatch[1]}s easy run`;
+
+  const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
+  if (minMatch) return `${minMatch[1]}m easy run`;
+
+  return `${value} easy run`;
+};
+
+const normalizeRecoveryStep = (raw: string): string => {
+  const value = (raw || '').trim();
+  if (!value || value === '0') return '';
+
+  const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/i);
+  if (kmMatch) return `${kmMatch[1]}km recovery run`;
+
+  const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/i);
+  if (secMatch) return `${secMatch[1]}s recovery`;
+
+  const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/i);
+  if (minMatch) return `${minMatch[1]}m recovery`;
+
+  const numericOnly = value.match(/^(\d+(?:\.\d+)?)$/);
+  if (numericOnly) return `${numericOnly[1]}s recovery`;
+
+  return `${value} recovery`;
+};
+
+const extractEasyPaceFromDescription = (description: string): string => {
+  const text = (description || '').trim();
+  if (!text) return '';
+  const m = text.match(/Target Pace:\s*([0-9]+:[0-9]{2})(?:-([0-9]+:[0-9]{2}))?\/km/i);
+  if (!m) return '';
+  const low = (m[1] || '').trim();
+  const high = (m[2] || '').trim();
+  if (!low) return '';
+  return high ? `${low}-${high}/km` : `${low}/km`;
+};
+
 const sanitizeFilename = (name: string): string => {
   const safe = (name || 'workout')
     .replace(/[^a-zA-Z0-9-_]+/g, '_')
@@ -34,54 +99,32 @@ const sanitizeFilename = (name: string): string => {
   return safe || 'workout';
 };
 
-const isPlaceholderStep = (raw?: string): boolean => {
-  const value = (raw || '').trim().toLowerCase();
-  return PLACEHOLDER_STEP_VALUES.has(value);
-};
-
-const parseTimeTokenToSec = (token: string): number => {
-  const parts = token.trim().split(':').map((v) => Number(v));
-  if (parts.length === 2 && parts.every((v) => Number.isFinite(v))) {
-    return (parts[0] * 60) + parts[1];
-  }
-  if (parts.length === 3 && parts.every((v) => Number.isFinite(v))) {
-    return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
-  }
-  return 0;
-};
-
 const parsePaceRangeToSpeedRaw = (pace?: string): { low: number; high: number } | null => {
-  const text = (pace || '').replace(/\/km/gi, '').replace(/pace/gi, '').trim();
+  const text = normalizePaceRange(pace || '');
   if (!text) return null;
 
-  const pieces = text.split('-').map((v) => v.trim()).filter(Boolean);
-  if (pieces.length === 0) return null;
+  const parts = text.replace('/km', '').split('-').map((p) => p.trim()).filter(Boolean);
+  if (!parts.length) return null;
 
-  const seconds = pieces
-    .map(parseTimeTokenToSec)
-    .filter((v) => Number.isFinite(v) && v > 0);
+  const toSec = (token: string): number => {
+    const segments = token.split(':').map((v) => Number(v));
+    if (segments.length === 2 && segments.every((v) => Number.isFinite(v))) return (segments[0] * 60) + segments[1];
+    if (segments.length === 3 && segments.every((v) => Number.isFinite(v))) return (segments[0] * 3600) + (segments[1] * 60) + segments[2];
+    return 0;
+  };
 
-  if (seconds.length === 0) return null;
+  const values = parts.map(toSec).filter((v) => v > 0);
+  if (!values.length) return null;
 
-  const [a, b] = seconds.length === 1 ? [seconds[0], seconds[0]] : [seconds[0], seconds[1]];
-  const speedA = 1000 / a;
-  const speedB = 1000 / b;
+  const slowest = Math.max(...values);
+  const fastest = Math.min(...values);
+  const lowMs = 1000 / slowest;
+  const highMs = 1000 / fastest;
 
   return {
-    low: Math.round(Math.min(speedA, speedB) * 1000),
-    high: Math.round(Math.max(speedA, speedB) * 1000),
+    low: Math.round(lowMs * 1000),
+    high: Math.round(highMs * 1000),
   };
-};
-
-const extractEasyPaceFromDescription = (description?: string): string => {
-  const text = (description || '').trim();
-  if (!text) return '';
-  const m = text.match(/Target Pace:\s*([0-9]+:[0-9]{2})(?:-([0-9]+:[0-9]{2}))?\/km/i);
-  if (!m) return '';
-  const low = (m[1] || '').trim();
-  const high = (m[2] || '').trim();
-  if (!low) return '';
-  return high ? `${low}-${high}` : low;
 };
 
 const parseDurationToFit = (raw?: string): { durationType: 'distance' | 'time'; durationValue: number } | null => {
@@ -91,29 +134,19 @@ const parseDurationToFit = (raw?: string): { durationType: 'distance' | 'time'; 
   const kmMatch = value.match(/(\d+(?:\.\d+)?)\s*km/);
   if (kmMatch) {
     const meters = Math.max(0, Number(kmMatch[1]) * 1000);
-    if (meters <= 0) return null;
-    return { durationType: 'distance', durationValue: Math.round(meters * 100) };
+    if (meters > 0) return { durationType: 'distance', durationValue: Math.round(meters * 100) };
   }
 
   const secMatch = value.match(/(\d+(?:\.\d+)?)\s*s/);
   if (secMatch) {
     const seconds = Math.max(0, Number(secMatch[1]));
-    if (seconds <= 0) return null;
-    return { durationType: 'time', durationValue: Math.round(seconds * 1000) };
+    if (seconds > 0) return { durationType: 'time', durationValue: Math.round(seconds * 1000) };
   }
 
   const minMatch = value.match(/(\d+(?:\.\d+)?)\s*m(?![a-z])/);
   if (minMatch) {
     const seconds = Math.max(0, Number(minMatch[1]) * 60);
-    if (seconds <= 0) return null;
-    return { durationType: 'time', durationValue: Math.round(seconds * 1000) };
-  }
-
-  const numeric = value.match(/^(\d+(?:\.\d+)?)$/);
-  if (numeric) {
-    const seconds = Math.max(0, Number(numeric[1]));
-    if (seconds <= 0) return null;
-    return { durationType: 'time', durationValue: Math.round(seconds * 1000) };
+    if (seconds > 0) return { durationType: 'time', durationValue: Math.round(seconds * 1000) };
   }
 
   return null;
@@ -147,36 +180,34 @@ const buildFitStep = (
   };
 };
 
-const buildWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
+const buildFitWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
   const steps: FitStepSpec[] = [];
 
-  const warmupDuration = parseDurationToFit(session.warmup);
-  if (warmupDuration) {
-    steps.push(buildFitStep('Warm Up', warmupDuration, 'warmup'));
+  const warmup = parseDurationToFit(session.warmup);
+  if (warmup) {
+    steps.push(buildFitStep('Warm Up', warmup, 'warmup'));
   }
 
-  if (session.intervals && session.intervals.length > 0) {
-    for (const int of session.intervals) {
-      const repDistance = Math.max(0, Number(int.distance) || 0);
+  if (session.intervals?.length) {
+    for (const interval of session.intervals) {
+      const reps = Math.max(1, Number(interval.count) || 1);
+      const repDistance = Math.max(0, Number(interval.distance) || 0);
       const repDuration = repDistance > 0
         ? { durationType: 'distance' as const, durationValue: Math.round(repDistance * 100) }
-        : parseDurationToFit(int.description) || { durationType: 'time' as const, durationValue: 60000 };
+        : { durationType: 'time' as const, durationValue: Math.max(60000, Math.round((Number(session.duration) || 1) * 60000)) };
+      const recovery = parseDurationToFit(interval.rest || '');
+      const blockStart = steps.length;
 
-      const reps = Math.max(1, Number(int.count) || 1);
-      const recoveryDuration = parseDurationToFit(int.rest || '');
-      const blockStartIndex = steps.length;
-
-      // Encode one rep pair + a FIT repeat step so Garmin shows repeats instead of flat duplicated steps.
-      steps.push(buildFitStep('Run', repDuration, 'active', int.pace));
-      if (recoveryDuration) {
-        steps.push(buildFitStep('Recover', recoveryDuration, 'rest'));
+      steps.push(buildFitStep('Run', repDuration, session.type === WorkoutType.THRESHOLD ? 'interval' : 'active', interval.pace));
+      if (recovery) {
+        steps.push(buildFitStep('Recovery', recovery, 'recovery'));
       }
 
       if (reps > 1) {
         steps.push({
           wktStepName: `Repeat ${reps}x`,
           durationType: 'repeatUntilStepsCmplt',
-          durationValue: blockStartIndex,
+          durationValue: blockStart,
           targetType: 'open',
           targetValue: reps,
           intensity: 'active',
@@ -184,27 +215,16 @@ const buildWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
       }
     }
   } else {
-    const distanceMeters = Math.max(0, (Number(session.distance) || 0) * 1000);
-    const duration = distanceMeters > 0
-      ? { durationType: 'distance' as const, durationValue: Math.round(distanceMeters * 100) }
-      : { durationType: 'time' as const, durationValue: Math.max(60000, Math.round((Number(session.duration) || 0) * 60000)) };
-
-    steps.push(buildFitStep('Run', duration, 'active', extractEasyPaceFromDescription(session.description)));
+    const distMeters = Math.max(0, (Number(session.distance) || 0) * 1000);
+    const duration = distMeters > 0
+      ? { durationType: 'distance' as const, durationValue: Math.round(distMeters * 100) }
+      : { durationType: 'time' as const, durationValue: Math.max(60000, Math.round((Number(session.duration) || 1) * 60000)) };
+    steps.push(buildFitStep('Run', duration, 'active', extractEasyPaceFromDescription(session.description || '')));
   }
 
-  const cooldownDuration = parseDurationToFit(session.cooldown);
-  if (cooldownDuration) {
-    steps.push(buildFitStep('Cool Down', cooldownDuration, 'cooldown'));
-  }
-
-  if (steps.length === 0) {
-    steps.push({
-      wktStepName: 'Run',
-      durationType: 'time',
-      durationValue: Math.max(60000, Math.round((Number(session.duration) || 1) * 60000)),
-      targetType: 'open',
-      intensity: 'active',
-    });
+  const cooldown = parseDurationToFit(session.cooldown);
+  if (cooldown) {
+    steps.push(buildFitStep('Cool Down', cooldown, 'cooldown'));
   }
 
   return steps;
@@ -222,7 +242,7 @@ const toBase64 = (bytes: Uint8Array): string => {
 
 const buildFitWorkoutFileBase64 = (session: WorkoutSession): string => {
   const workoutName = getDynamicTitle(session);
-  const steps = buildWorkoutSteps(session);
+  const steps = buildFitWorkoutSteps(session);
   const encoder = new Encoder();
 
   encoder.onMesg(Profile.MesgNum.FILE_ID, {
@@ -240,9 +260,9 @@ const buildFitWorkoutFileBase64 = (session: WorkoutSession): string => {
     wktDescription: session.description || workoutName,
   });
 
-  steps.forEach((step, index) => {
+  steps.forEach((step, idx) => {
     encoder.onMesg(Profile.MesgNum.WORKOUT_STEP, {
-      messageIndex: index,
+      messageIndex: idx,
       ...step,
     });
   });
@@ -250,20 +270,70 @@ const buildFitWorkoutFileBase64 = (session: WorkoutSession): string => {
   return toBase64(encoder.close());
 };
 
+/**
+ * Intervals.icu workout text format with explicit run/recovery wording.
+ * Example: Wu 2km easy run; 5x[2km @ 4:10-4:20/km run / 60s recovery]; Cd 1km easy run
+ */
+const formatIcuWorkoutText = (session: WorkoutSession): string => {
+  const title = getDynamicTitle(session);
+  const chunks: string[] = [];
+
+  if (!isPlaceholderStep(session.warmup) && session.warmup) {
+    chunks.push(`Wu ${normalizeEasyStep(session.warmup)}`);
+  }
+
+  if (session.intervals && session.intervals.length > 0) {
+    for (const int of session.intervals) {
+      const reps = Math.max(1, Number(int.count) || 1);
+      const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
+      const pace = normalizePaceRange(int.pace || '');
+      const runStep = `${distStr}${pace ? ` @ ${pace}` : ''} run`.trim();
+      const recovery = normalizeRecoveryStep(int.rest || '');
+
+      if (reps > 1) {
+        if (recovery) {
+          chunks.push(`${reps}x[${runStep} / ${recovery}]`);
+        } else {
+          chunks.push(`${reps}x[${runStep}]`);
+        }
+      } else if (recovery) {
+        chunks.push(`${runStep}; ${recovery}`);
+      } else {
+        chunks.push(runStep);
+      }
+    }
+  } else {
+    const easyPace = extractEasyPaceFromDescription(session.description || '');
+    const main = `${session.distance}km${easyPace ? ` @ ${easyPace}` : ''} run`;
+    chunks.push(main);
+  }
+
+  if (!isPlaceholderStep(session.cooldown) && session.cooldown) {
+    chunks.push(`Cd ${normalizeEasyStep(session.cooldown)}`);
+  }
+
+  const body = chunks.join('; ');
+  return `${title}\n\n${body}`;
+};
+
 const buildWorkoutPayload = (session: WorkoutSession, date: string) => {
   const dynamicTitle = getDynamicTitle(session);
   const movingTimeSec = Math.max(0, Math.round((Number(session.duration) || 0) * 60));
-  const fileContentsBase64 = buildFitWorkoutFileBase64(session);
+  const icuWorkout = formatIcuWorkoutText(session);
+  const fitWorkoutBase64 = buildFitWorkoutFileBase64(session);
 
   return {
     category: 'WORKOUT',
     type: getIcuType(session.type),
     name: dynamicTitle,
+    // Keep ICU text for readability/debugging and fallback parsing.
+    description: icuWorkout,
+    // Also provide FIT to preserve strict step structure and repeat encoding.
+    filename: `${sanitizeFilename(dynamicTitle)}.fit`,
+    file_contents_base64: fitWorkoutBase64,
     // Midday local avoids timezone/date rollover issues (e.g. missing Sunday on downstream sync).
     start_date_local: `${date}T12:00:00`,
     moving_time: movingTimeSec,
-    filename: `${sanitizeFilename(dynamicTitle)}.fit`,
-    file_contents_base64: fileContentsBase64,
   };
 };
 
