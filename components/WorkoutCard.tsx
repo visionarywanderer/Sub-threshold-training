@@ -277,6 +277,23 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     return secondsToTime(mp);
   };
 
+  const getIdealPaceRange = () => {
+    if (isThreshold && currentSession.intervals?.length) {
+      const dist = Number(currentSession.intervals[0].distance);
+      return getIntervalPaceRange(profile, dist, 0).range;
+    }
+    if (isEasy) {
+      const easyRange = getEasyRunPaceRange(profile, 0);
+      return `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
+    }
+    if (isLongRun && currentSession.title.toLowerCase().includes('easy')) {
+      const easyRange = getEasyRunPaceRange(profile, 0);
+      return `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
+    }
+    const mp = calculatePaceForDistance(profile.raceDistance, profile.raceTime, 42195);
+    return secondsToTime(mp);
+  };
+
   const getIntervalDisplayPace = (distanceMeters: number, paceFromSession?: string) => {
     if (isThreshold) {
       return getIntervalPaceRange(profile, Number(distanceMeters), paceCorrectionSec).range;
@@ -355,6 +372,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
           <div className={`rounded-xl border px-3.5 py-3 ${tone.pace}`}>
             <p className="text-[10px] uppercase tracking-wide font-semibold">Target Pace</p>
             <p className="text-lg font-bold mt-1">{getPrimaryPaceRange()}/km</p>
+            <p className="text-[11px] mt-1 opacity-75">Ideal: {getIdealPaceRange()}/km</p>
           </div>
         </div>
 
