@@ -237,6 +237,35 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     pushUpdate(next);
   };
 
+  const updateEasyLongRunDistance = (distanceKm: number) => {
+    const nextDistance = Math.max(0, Number(distanceKm) || 0);
+    const easyRange = getEasyRunPaceRange(profile, paceCorrectionSec);
+    const easyCenter = easyRange.center;
+    const easyRangeText = `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
+
+    const applyVariantUpdate = (session: WorkoutSession): WorkoutSession => {
+      const nextSession: WorkoutSession = {
+        ...session,
+        distance: nextDistance,
+        duration: Math.round(nextDistance * (easyCenter / 60)),
+        description: 'Continuous easy effort. Aerobic base focus.',
+        intervals: [{ distance: Math.round(nextDistance * 1000), count: 1, pace: easyRangeText, rest: '0', description: 'Easy' }],
+      };
+      return nextSession;
+    };
+
+    let next = applyVariantUpdate(currentSession);
+
+    if (Array.isArray(next.variants) && next.variants.length > 0) {
+      const updatedVariants = next.variants.map((variant) => (
+        variant.id === next.id ? applyVariantUpdate({ ...variant }) : variant
+      ));
+      next = { ...next, variants: updatedVariants };
+    }
+
+    pushUpdate(next);
+  };
+
   useEffect(() => {
     if (currentSession.type !== WorkoutType.THRESHOLD) return;
     const next = recalcDerived(currentSession);
@@ -437,6 +466,23 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       step={1}
                       onChange={(e) => updateEasyDistance(Number(e.target.value))}
                       className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-28"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-300">Subthreshold {thresholdPace}/km</div>
+                </div>
+              )}
+
+              {isLongRun && currentSession.title.toLowerCase().includes('easy') && (
+                <div className="flex items-end justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] text-slate-500 font-semibold uppercase">Long run distance (km)</span>
+                    <input
+                      type="number"
+                      value={currentSession.distance}
+                      min={0}
+                      step={1}
+                      onChange={(e) => updateEasyLongRunDistance(Number(e.target.value))}
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-32"
                     />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-300">Subthreshold {thresholdPace}/km</div>
