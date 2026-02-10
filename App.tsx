@@ -329,9 +329,19 @@ const App: React.FC = () => {
     if (totalKm <= 0) return 0;
     return (subThresholdIntervalKm / totalKm) * 100;
   }, [plan, subThresholdIntervalKm]);
+  const resolveSessionPaceCorrection = useCallback((session: WorkoutSession, weatherDeltaSec: number): number => {
+    if (session.type === WorkoutType.THRESHOLD && (session.environment || 'road') === 'treadmill') {
+      return -6;
+    }
+    if (session.type === WorkoutType.LONG_RUN && session.title.toLowerCase().includes('easy') && (session.environment || 'trail') === 'trail') {
+      return 0;
+    }
+    return weatherDeltaSec;
+  }, []);
   const applyDayWeatherToSession = useCallback((session: WorkoutSession, dayDeltaSec: number): WorkoutSession => {
+    const effectiveDeltaSec = resolveSessionPaceCorrection(session, dayDeltaSec);
     if (session.type === WorkoutType.EASY) {
-      const easyRange = getEasyRunPaceRange(profile, dayDeltaSec);
+      const easyRange = getEasyRunPaceRange(profile, effectiveDeltaSec);
       const easyCenter = easyRange.center;
       return {
         ...session,
@@ -343,13 +353,13 @@ const App: React.FC = () => {
     if (session.type === WorkoutType.THRESHOLD) {
       const newIntervals = (session.intervals || []).map((int) => {
         const dist = Number(int.distance) || 0;
-        const paceData = getIntervalPaceRange(profile, dist, dayDeltaSec);
+        const paceData = getIntervalPaceRange(profile, dist, effectiveDeltaSec);
         return { ...int, distance: dist, pace: paceData.range, description: paceData.effort };
       });
 
       const wuKm = Math.max(0, Number(profile.warmupDist) || 0);
       const cdKm = Math.max(0, Number(profile.cooldownDist) || 0);
-      const easyCenter = getEasyRunPaceRange(profile, dayDeltaSec).center;
+      const easyCenter = getEasyRunPaceRange(profile, effectiveDeltaSec).center;
       const intervalKm = newIntervals.reduce((sum, int) => {
         const reps = Math.max(1, Number(int.count) || 1);
         const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
@@ -382,8 +392,19 @@ const App: React.FC = () => {
       };
     }
 
+    if (session.type === WorkoutType.LONG_RUN && session.title.toLowerCase().includes('easy') && (session.environment || 'trail') === 'trail') {
+      return {
+        ...session,
+        environment: 'trail',
+        useHeartRateTarget: true,
+        description: Number(profile.maxHR) > 0
+          ? `Continuous easy trail effort. Target HR ${Math.round(profile.maxHR * 0.70)}-${Math.round(profile.maxHR * 0.78)} bpm.`
+          : 'Continuous easy trail effort. Target HR in easy aerobic zone.',
+      };
+    }
+
     return session;
-  }, [profile]);
+  }, [profile, resolveSessionPaceCorrection]);
 
   const handleGeneratePlan = () => {
     const normalized = normalizeTo5kProfile(profile);
@@ -414,7 +435,7 @@ const App: React.FC = () => {
         const dateStr = formatLocalDate(targetDate);
         const dayLabel = WEEKDAY_ORDER[i] || day.day;
         const dayForecast = forecastByDate[dateStr];
-        const dayPaceCorrection = dayForecast
+        const weatherDeltaSec = dayForecast
           ? getWeatherPaceDeltaSeconds(currentThreshold, dayForecast.temperatureC, dayForecast.humidityPct, dayForecast.windKmh)
           : 0;
 
@@ -429,7 +450,7 @@ const App: React.FC = () => {
 
         const externalId = `norskflow:${profile.uid || 'anon'}:${dateStr}:${i}`;
         workoutItems.push({ index: i, dayLabel, externalId, dateStr });
-        newDays[i] = { ...day, session: applyDayWeatherToSession(day.session, dayPaceCorrection) };
+        newDays[i] = { ...day, session: applyDayWeatherToSession(day.session, weatherDeltaSec) };
       }
 
       const bulkResult = await syncWorkoutsBulkToIcu(
@@ -688,9 +709,12 @@ const App: React.FC = () => {
                       dayDate.setDate(dayDate.getDate() + idx);
                       const dayDateStr = formatLocalDate(dayDate);
                       const dayForecast = forecastByDate[dayDateStr];
-                      const dayPaceCorrection = dayForecast
+                      const weatherDeltaSec = dayForecast
                         ? getWeatherPaceDeltaSeconds(currentThreshold, dayForecast.temperatureC, dayForecast.humidityPct, dayForecast.windKmh)
                         : 0;
+                      const dayPaceCorrection = day.session
+                        ? resolveSessionPaceCorrection(day.session, weatherDeltaSec)
+                        : weatherDeltaSec;
                       return (
                       <SortableDayItem
                         key={day.day}
@@ -712,10 +736,10 @@ const App: React.FC = () => {
                           targetDate.setDate(targetDate.getDate() + idx);
                           const dateStr = formatLocalDate(targetDate);
                           const dayForecast = forecastByDate[dateStr];
-                          const dayPaceCorrection = dayForecast
+                          const weatherDeltaSec = dayForecast
                             ? getWeatherPaceDeltaSeconds(currentThreshold, dayForecast.temperatureC, dayForecast.humidityPct, dayForecast.windKmh)
                             : 0;
-                          const correctedSession = applyDayWeatherToSession(day.session, dayPaceCorrection);
+                          const correctedSession = applyDayWeatherToSession(day.session, weatherDeltaSec);
                           const result = await syncWorkoutToIcu(intervalsConfig, correctedSession, dateStr);
                           if (result.ok && result.eventId) {
                             const newDays = [...plan.days];
