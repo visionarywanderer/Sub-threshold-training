@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
+import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType, TrainingSport } from './types';
 import { calculateVDOTFromRace, formatThresholdSessionTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime, getTreadmillPaceDeltaSeconds, DEFAULT_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, MAX_TREADMILL_INCLINE } from './utils/calculations';
 import { deleteWorkoutFromIcu, syncWorkoutToIcu, syncWorkoutsBulkToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
@@ -76,15 +76,21 @@ const EMPTY_RUN_SCHEDULE: UserSchedule = {
   'Monday': DayType.REST, 'Tuesday': DayType.REST, 'Wednesday': DayType.REST,
   'Thursday': DayType.REST, 'Friday': DayType.REST, 'Saturday': DayType.REST, 'Sunday': DayType.REST
 };
+const DEFAULT_SPORT_SCHEDULE: Record<string, TrainingSport> = {
+  'Monday': 'run', 'Tuesday': 'run', 'Wednesday': 'run',
+  'Thursday': 'run', 'Friday': 'run', 'Saturday': 'run', 'Sunday': 'run'
+};
 
 const EMPTY_RUN_PROFILE: UserProfile = {
   name: '', raceDistance: FIVE_K_DISTANCE, raceTime: '', maxHR: 0, weeklyVolume: 0,
-  unit: DistanceUnit.KM, schedule: EMPTY_RUN_SCHEDULE, warmupDist: 0, cooldownDist: 0
+  ftp: 0, unit: DistanceUnit.KM, schedule: EMPTY_RUN_SCHEDULE, scheduleSport: DEFAULT_SPORT_SCHEDULE, warmupDist: 0, cooldownDist: 0
 };
 
 const normalizeTo5kProfile = (profile: UserProfile): UserProfile => ({
   ...profile,
   raceDistance: FIVE_K_DISTANCE,
+  ftp: Number(profile.ftp) || 0,
+  scheduleSport: { ...DEFAULT_SPORT_SCHEDULE, ...(profile.scheduleSport || {}) },
 });
 
 const getProfileStorageKey = (uid: string): string => `${RUN_STORAGE_KEY_PREFIX}_${uid}`;
@@ -316,7 +322,11 @@ const App: React.FC = () => {
   const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile);
   const vdot = calculateVDOTFromRace(profile.raceDistance, profile.raceTime);
   const correctedThreshold = currentThreshold;
-  const subThresholdIntervalKm = useMemo(() => {
+  const totalTrainingMinutes = useMemo(() => {
+    if (!plan) return 0;
+    return plan.days.reduce((sum, d) => sum + (d.session?.duration || 0), 0);
+  }, [plan]);
+  const subThresholdMinutes = useMemo(() => {
     if (!plan) return 0;
     return plan.days.reduce((sum, day) => {
       const session = day.session;
@@ -329,28 +339,33 @@ const App: React.FC = () => {
 
       if (!isThresholdDay && !isFiveKmLongRunVariant) return sum;
 
-      const sessionIntervalKm = session.intervals.reduce((acc, int) => {
+      const sessionIntervalMinutes = session.intervals.reduce((acc, int) => {
         const reps = Math.max(1, Number(int.count) || 1);
+        if ((session.sport || 'run') === 'bike') {
+          const perRepSec = Math.max(0, Number(int.durationSec) || 0);
+          return acc + ((perRepSec * reps) / 60);
+        }
         const distanceM = Math.max(0, Number(int.distance) || 0);
-        return acc + ((distanceM * reps) / 1000);
+        const paceMid = parsePaceRangeMidSec(int.pace || '');
+        return acc + ((distanceM / 1000) * reps * (paceMid / 60));
       }, 0);
 
-      return sum + sessionIntervalKm;
+      return sum + sessionIntervalMinutes;
     }, 0);
   }, [plan]);
   const subThresholdPct = useMemo(() => {
-    const totalKm = plan?.totalDistance || 0;
-    if (totalKm <= 0) return 0;
-    return (subThresholdIntervalKm / totalKm) * 100;
-  }, [plan, subThresholdIntervalKm]);
+    if (totalTrainingMinutes <= 0) return 0;
+    return (subThresholdMinutes / totalTrainingMinutes) * 100;
+  }, [subThresholdMinutes, totalTrainingMinutes]);
   const getZone2Range = useCallback((): { low?: number; high?: number; label: string } => {
     const maxHr = Number(profile.maxHR) || 0;
-    if (maxHr <= 0) return { label: 'Set Max HR in Settings' };
+    if (maxHr <= 0) return { label: 'Zone 2' };
     const low = Math.round(maxHr * 0.70);
     const high = Math.round(maxHr * 0.78);
-    return { low, high, label: `Z2 ${low}-${high} bpm` };
+    return { low, high, label: `Zone 2 (${low}-${high} bpm)` };
   }, [profile.maxHR]);
   const resolveSessionPaceCorrection = useCallback((session: WorkoutSession, weatherDeltaSec: number): number => {
+    if ((session.sport || 'run') === 'bike') return 0;
     const env = session.environment || 'road';
     if (env === 'trail') {
       return 0;
@@ -361,6 +376,9 @@ const App: React.FC = () => {
     return weatherDeltaSec;
   }, []);
   const applyDayWeatherToSession = useCallback((session: WorkoutSession, dayDeltaSec: number): WorkoutSession => {
+    if ((session.sport || 'run') === 'bike') {
+      return session;
+    }
     const env = session.environment || 'road';
     const useHeartRateTarget = env === 'trail';
     const zone2 = getZone2Range();
@@ -690,13 +708,13 @@ const App: React.FC = () => {
               <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
                   <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">NorskFlow Run</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Plan volume {plan?.totalDistance || 0}km.</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Total training {Math.round(totalTrainingMinutes)} min.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
                       VDOT {vdot > 0 ? vdot.toFixed(1) : '--'}
                     </span>
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
-                      Subthreshold {subThresholdIntervalKm.toFixed(1)}km
+                      Subthreshold {Math.round(subThresholdMinutes)} min
                     </span>
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
                       Subthreshold {subThresholdPct.toFixed(1)}%
@@ -867,6 +885,10 @@ const App: React.FC = () => {
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Weekly Target (km)</label>
                                 <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
                             </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">FTP (Optional)</label>
+                                <input type="number" name="ftp" value={profile.ftp || 0} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
+                            </div>
                             <div className="flex gap-2">
                                 <div className="w-1/2">
                                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Warmup (km)</label>
@@ -886,6 +908,19 @@ const App: React.FC = () => {
                             {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
                                 <div key={day} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
                                     <span className="font-bold text-slate-700 dark:text-slate-200 text-xs w-20">{day}</span>
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex gap-1 rounded-lg border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-900">
+                                        {(['run', 'bike'] as TrainingSport[]).map((sport) => (
+                                          <button
+                                            key={sport}
+                                            onClick={() => setProfile(p => ({ ...p, scheduleSport: { ...(p.scheduleSport || DEFAULT_SPORT_SCHEDULE), [day]: sport } }))}
+                                            className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase ${((profile.scheduleSport?.[day] || 'run') === sport) ? 'bg-norway-blue dark:bg-sky-500 text-white' : 'text-slate-500 dark:text-slate-300'}`}
+                                          >
+                                            {sport === 'run' ? 'Run' : 'Bike'}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
                                     <div className="flex gap-1 overflow-x-auto scrollbar-hide">
                                         {[DayType.REST, DayType.EASY, DayType.THRESHOLD, DayType.LONG_RUN].map(type => (
                                             <button 
@@ -893,7 +928,13 @@ const App: React.FC = () => {
                                               onClick={() => setProfile(p => ({ ...p, schedule: { ...p.schedule, [day]: type } }))}
                                               className={`px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase whitespace-nowrap border transition-all ${profile.schedule[day] === type ? 'bg-norway-blue dark:bg-sky-500 text-white' : 'bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-300 border-slate-100 dark:border-slate-700'}`}
                                             >
-                                                {type.replace('Threshold', 'SubT')}
+                                                {(() => {
+                                                  const sport = profile.scheduleSport?.[day] || 'run';
+                                                  if (type === DayType.EASY) return sport === 'bike' ? 'Easy Ride' : 'Easy Run';
+                                                  if (type === DayType.THRESHOLD) return sport === 'bike' ? 'SubT Bike' : 'SubT';
+                                                  if (type === DayType.LONG_RUN) return sport === 'bike' ? 'Long Ride' : 'Long Run';
+                                                  return 'Rest';
+                                                })()}
                                             </button>
                                         ))}
                                     </div>

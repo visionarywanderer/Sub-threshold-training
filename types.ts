@@ -10,6 +10,8 @@ export enum DayType {
   LONG_RUN = 'Long Run'
 }
 
+export type TrainingSport = 'run' | 'bike';
+
 export interface UserSchedule {
   [key: string]: DayType;
 }
@@ -21,9 +23,11 @@ export interface UserProfile {
   raceDistance: number;
   raceTime: string;
   maxHR: number;
+  ftp?: number;
   weeklyVolume: number;
   unit: DistanceUnit;
   schedule: UserSchedule;
+  scheduleSport?: Record<string, TrainingSport>;
   warmupDist: number;
   cooldownDist: number;
 }
@@ -38,16 +42,21 @@ export enum WorkoutType {
 
 export interface Interval {
   distance: number;
+  durationSec?: number;
   count: number;
   pace: string;
   rest: string;
   description: string;
+  targetZone?: string;
+  targetPowerLow?: number;
+  targetPowerHigh?: number;
 }
 
 export interface WorkoutSession {
   id: string;
   title: string;
   type: WorkoutType;
+  sport?: TrainingSport;
   environment?: 'road' | 'treadmill' | 'trail';
   treadmillInclinePct?: number;
   useHeartRateTarget?: boolean;

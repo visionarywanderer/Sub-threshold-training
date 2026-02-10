@@ -1,7 +1,7 @@
 import { UserProfile, WeeklyPlan, WorkoutType, WorkoutSession, DailyPlan, DayType } from '../types';
-export const MIN_TREADMILL_INCLINE = 3;
+export const MIN_TREADMILL_INCLINE = 0;
 export const MAX_TREADMILL_INCLINE = 15;
-export const DEFAULT_TREADMILL_INCLINE = 3;
+export const DEFAULT_TREADMILL_INCLINE = 1;
 
 export const formatThresholdSessionTitle = (reps: number, distanceMeters: number): string => {
   const safeReps = Math.max(1, Math.round(Number(reps) || 1));
@@ -65,9 +65,9 @@ export const applyPaceCorrection = (paceSec: number, deltaSec: number): number =
 
 export const getTreadmillPaceDeltaSeconds = (inclinePct: number): number => {
   const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(inclinePct) || DEFAULT_TREADMILL_INCLINE));
-  // 1% treadmill baseline is often close to outdoor effort; keep prior +6s/km benefit,
-  // then add climbing cost above 1%.
-  return Math.round(-6 + ((incline - 1) * 4));
+  if (incline <= 1) return -6;
+  // More aggressive pace slowdown from 2% onwards.
+  return Math.round(-6 + ((incline - 1) * 7));
 };
 
 export const predictRaceTime = (raceDistMeters: number, raceTimeStr: string, targetDistMeters: number): number => {
@@ -318,6 +318,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       id: id,
       title: formatThresholdSessionTitle(reps, dist),
       type: WorkoutType.THRESHOLD,
+      sport: 'run',
       environment: 'road',
       treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
       useHeartRateTarget: false,
@@ -341,6 +342,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         id: `${id}-easy`,
         title: `Easy Long Run`,
         type: WorkoutType.LONG_RUN,
+        sport: 'run',
         environment: 'road',
         treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
         useHeartRateTarget: false,
@@ -354,6 +356,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         id: `${id}-prog`,
         title: `Progressive Long Run`,
         type: WorkoutType.LONG_RUN,
+        sport: 'run',
         environment: 'road',
         treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
         useHeartRateTarget: false,
@@ -371,6 +374,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         id: `${id}-blocks`,
         title: `3x5km MP Long Run`,
         type: WorkoutType.LONG_RUN,
+        sport: 'run',
         environment: 'road',
         treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
         useHeartRateTarget: false,
@@ -385,8 +389,8 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
     return { ...variants[0], variants };
   };
 
-const createEasyRun = (id: string, dist: number): WorkoutSession => ({
-    id: id, title: `Easy Run`, type: WorkoutType.EASY, distance: dist,
+  const createEasyRun = (id: string, dist: number): WorkoutSession => ({
+    id: id, title: `Easy Run`, type: WorkoutType.EASY, sport: 'run', distance: dist,
     environment: 'road',
     treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
     useHeartRateTarget: false,
@@ -394,15 +398,122 @@ const createEasyRun = (id: string, dist: number): WorkoutSession => ({
     description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
     warmup: 'N/A', cooldown: 'N/A'
   });
+  const createBikeEasy = (id: string): WorkoutSession => {
+    const duration = Math.max(45, Math.round((easyDist > 0 ? easyDist * (easyPace / 60) : 60)));
+    return {
+      id,
+      title: 'Easy Ride',
+      type: WorkoutType.EASY,
+      sport: 'bike',
+      environment: 'road',
+      treadmillInclinePct: 0,
+      useHeartRateTarget: true,
+      distance: 0,
+      duration,
+      description: profile.ftp && profile.ftp > 0
+        ? `Zone 2 endurance ride (${Math.round(profile.ftp * 0.56)}-${Math.round(profile.ftp * 0.75)}w).`
+        : 'Zone 2 endurance ride.',
+      intervals: [{ distance: 0, durationSec: duration * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }],
+      warmup: '10m easy spin',
+      cooldown: '5m easy spin',
+    };
+  };
+  const createBikeThreshold = (id: string, dayName: string): WorkoutSession => {
+    const mainRepSec = dayName === 'Thursday' ? 8 * 60 : dayName === 'Sunday' ? 10 * 60 : 6 * 60;
+    const reps = dayName === 'Thursday' ? 5 : dayName === 'Sunday' ? 4 : 6;
+    const rest = '120s';
+    const workMinutes = Math.round((mainRepSec * reps) / 60);
+    const duration = 15 + workMinutes + (Math.max(0, reps - 1) * 2) + 10;
+    const ftp = Number(profile.ftp) || 0;
+    const targetPowerLow = ftp > 0 ? Math.round(ftp * 0.92) : undefined;
+    const targetPowerHigh = ftp > 0 ? Math.round(ftp * 0.98) : undefined;
+    return {
+      id,
+      title: `SubT ${reps}x${Math.round(mainRepSec / 60)}min`,
+      type: WorkoutType.THRESHOLD,
+      sport: 'bike',
+      environment: 'road',
+      useHeartRateTarget: true,
+      distance: 0,
+      duration,
+      description: ftp > 0
+        ? `Subthreshold cycling. ${targetPowerLow}-${targetPowerHigh}w (92-98% FTP).`
+        : 'Subthreshold cycling. Zone 3-4 effort.',
+      intervals: [{
+        distance: 0,
+        durationSec: mainRepSec,
+        count: reps,
+        pace: '',
+        rest,
+        description: ftp > 0 ? `${targetPowerLow}-${targetPowerHigh}w` : 'Zone 3-4',
+        targetZone: 'Z3-Z4',
+        targetPowerLow,
+        targetPowerHigh,
+      }],
+      warmup: '15m easy spin',
+      cooldown: '10m easy spin',
+    };
+  };
+  const createBikeLong = (id: string): WorkoutSession => {
+    const ftp = Number(profile.ftp) || 0;
+    const easyRide: WorkoutSession = {
+      id: `${id}-easy`,
+      title: 'Easy Long Ride',
+      type: WorkoutType.LONG_RUN,
+      sport: 'bike',
+      environment: 'road',
+      useHeartRateTarget: true,
+      distance: 0,
+      duration: 120,
+      description: ftp > 0 ? `Aerobic long ride ${Math.round(ftp * 0.56)}-${Math.round(ftp * 0.75)}w.` : 'Aerobic long ride in Zone 2.',
+      intervals: [{ distance: 0, durationSec: 120 * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }],
+      warmup: '10m easy spin',
+      cooldown: '5m easy spin',
+    };
+    const progRide: WorkoutSession = {
+      id: `${id}-prog`,
+      title: 'Progressive Long Ride',
+      type: WorkoutType.LONG_RUN,
+      sport: 'bike',
+      environment: 'road',
+      useHeartRateTarget: true,
+      distance: 0,
+      duration: 120,
+      description: ftp > 0 ? `Progressive ride with tempo finish (${Math.round(ftp * 0.8)}-${Math.round(ftp * 0.88)}w).` : 'Progressive ride finishing upper aerobic.',
+      intervals: [
+        { distance: 0, durationSec: 60 * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' },
+        { distance: 0, durationSec: 36 * 60, count: 1, pace: '', rest: '0', description: ftp > 0 ? `${Math.round(ftp * 0.8)}-${Math.round(ftp * 0.88)}w` : 'Zone 3', targetZone: 'Z3', targetPowerLow: ftp > 0 ? Math.round(ftp * 0.8) : undefined, targetPowerHigh: ftp > 0 ? Math.round(ftp * 0.88) : undefined },
+        { distance: 0, durationSec: 24 * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }
+      ],
+      warmup: '10m easy spin',
+      cooldown: '5m easy spin',
+    };
+    const blockRide: WorkoutSession = {
+      id: `${id}-blocks`,
+      title: '3x20min Tempo Ride',
+      type: WorkoutType.LONG_RUN,
+      sport: 'bike',
+      environment: 'road',
+      useHeartRateTarget: true,
+      distance: 0,
+      duration: 130,
+      description: ftp > 0 ? `3x20 min tempo at ${Math.round(ftp * 0.85)}-${Math.round(ftp * 0.92)}w.` : '3x20 min tempo in Zone 3.',
+      intervals: [{ distance: 0, durationSec: 20 * 60, count: 3, pace: '', rest: '300s', description: ftp > 0 ? `${Math.round(ftp * 0.85)}-${Math.round(ftp * 0.92)}w` : 'Zone 3', targetZone: 'Z3', targetPowerLow: ftp > 0 ? Math.round(ftp * 0.85) : undefined, targetPowerHigh: ftp > 0 ? Math.round(ftp * 0.92) : undefined }],
+      warmup: '15m easy spin',
+      cooldown: '10m easy spin',
+    };
+    return { ...easyRide, variants: [easyRide, progRide, blockRide] };
+  };
 
   const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const dailyPlans: DailyPlan[] = dayOrder.map(dayName => {
     const type = profile.schedule[dayName] || DayType.REST;
     const id = dayName.toLowerCase();
     let session: WorkoutSession | null = null;
-    if (type === DayType.THRESHOLD) session = createThresholdSession(id, dayName);
-    else if (type === DayType.LONG_RUN) session = createLongRun(id);
-    else if (type === DayType.EASY && easyDist >= 4) session = createEasyRun(id, easyDist);
+    const sport = profile.scheduleSport?.[dayName] || 'run';
+    if (type === DayType.THRESHOLD) session = sport === 'bike' ? createBikeThreshold(id, dayName) : createThresholdSession(id, dayName);
+    else if (type === DayType.LONG_RUN) session = sport === 'bike' ? createBikeLong(id) : createLongRun(id);
+    else if (type === DayType.EASY) session = sport === 'bike' ? createBikeEasy(id) : (easyDist >= 4 ? createEasyRun(id, easyDist) : null);
     return { day: dayName, type, session };
   });
 

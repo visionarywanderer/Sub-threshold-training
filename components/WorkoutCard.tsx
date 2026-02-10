@@ -68,6 +68,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const isEasy = currentSession.type === WorkoutType.EASY;
   const isLongRun = currentSession.type === WorkoutType.LONG_RUN;
   const isThreshold = currentSession.type === WorkoutType.THRESHOLD;
+  const isBike = (currentSession.sport || 'run') === 'bike';
   const environment = currentSession.environment || 'road';
   const isTrailMode = environment === 'trail';
   const isTreadmillMode = environment === 'treadmill';
@@ -80,9 +81,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     return paceCorrectionSec;
   }, [isTrailMode, isTreadmillMode, treadmillIncline, paceCorrectionSec]);
   const getEasyHrRange = () => {
-    const maxHr = Number(profile.maxHR) || 0;
-    if (maxHr <= 0) return 'Set Max HR in Settings';
-    return `Z2 ${Math.round(maxHr * 0.70)}-${Math.round(maxHr * 0.78)} bpm`;
+    return 'Zone 2';
   };
   const getWeatherIcon = (weatherCode: number) => {
     if (weatherCode === 0) return Sun;
@@ -119,6 +118,15 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     if (v.endsWith('s')) return Number(v.replace('s', '')) || 0;
     if (v.endsWith('m')) return (Number(v.replace('m', '')) || 0) * 60;
     return 0;
+  };
+  const formatSecondsLabel = (seconds: number): string => {
+    const total = Math.max(0, Math.round(seconds || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${s}s`;
   };
   const formatPaceToken = (sec: number) => secondsToTime(Math.max(1, Math.round(sec)));
   const shiftPaceText = (pace: string, deltaSec: number): string => {
@@ -166,7 +174,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
   const withEnvironmentRules = (session: WorkoutSession): WorkoutSession => {
     const env = session.environment || 'road';
-    const useHeartRateTarget = env === 'trail';
+    const useHeartRateTarget = (session.sport || 'run') === 'bike' || env === 'trail';
     const maxHr = Number(profile.maxHR) || 0;
     return {
       ...session,
@@ -182,6 +190,27 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
 
   const recalcDerived = (session: WorkoutSession): WorkoutSession => {
     const normalizedSession = withEnvironmentRules(session);
+    if ((normalizedSession.sport || 'run') === 'bike') {
+      const intervals = normalizedSession.intervals || [];
+      const warmupSec = parseRestToSec(normalizedSession.warmup || '');
+      const cooldownSec = parseRestToSec(normalizedSession.cooldown || '');
+      const workSec = intervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        return sum + ((Number(int.durationSec) || 0) * reps);
+      }, 0);
+      const restSec = intervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const perRest = parseRestToSec(int.rest || '');
+        return sum + (perRest * Math.max(0, reps - 1));
+      }, 0);
+      const durationMin = Math.max(1, Math.round((workSec + restSec + warmupSec + cooldownSec) / 60) || normalizedSession.duration);
+      return {
+        ...normalizedSession,
+        useHeartRateTarget: true,
+        distance: 0,
+        duration: durationMin,
+      };
+    }
     if (session.type === WorkoutType.EASY) {
       const easyRange = getEasyRunPaceRange(profile, effectivePaceCorrectionSec);
       const easyPace = easyRange.center;
@@ -232,7 +261,9 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       return {
         ...normalizedSession,
         title: newIntervals.length
-          ? formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0))
+          ? ((normalizedSession.sport || 'run') === 'bike'
+            ? `SubT ${Math.max(1, Number(newIntervals[0].count) || 1)}x${Math.round((Number(newIntervals[0].durationSec) || 0) / 60)}min`
+            : formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0)))
           : normalizedSession.title,
         intervals: newIntervals,
         distance: sessionDistance,
@@ -277,7 +308,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
         [field]: field === 'distance' || field === 'count' ? Number(value) : value,
       };
 
-      if (field === 'distance' || field === 'count') {
+      if (!isBike && (field === 'distance' || field === 'count')) {
         const d = Number(updated.distance);
         if (d <= 1000) updated.count = clamp(Number(updated.count) || 10, 8, 20);
         else if (d === 2000) updated.count = clamp(Number(updated.count) || 5, 4, 6);
@@ -376,12 +407,21 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     if (!isThreshold || !currentSession.intervals?.length) return currentSession.title;
     const first = currentSession.intervals[0];
     const reps = Math.max(1, Number(first.count) || 1);
+    if (isBike) {
+      const mins = Math.round((Number(first.durationSec) || 0) / 60);
+      return `SubT ${reps}x${mins}min`;
+    }
     const dist = Math.max(0, Number(first.distance) || 0);
     const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
     return `SubT ${reps}x${distLabel}`;
-  }, [currentSession.intervals, currentSession.title, isThreshold]);
+  }, [currentSession.intervals, currentSession.title, isBike, isThreshold]);
 
   const getPrimaryPaceRange = () => {
+    if (isBike) {
+      const first = currentSession.intervals?.[0];
+      if (first?.targetPowerLow && first?.targetPowerHigh) return `${first.targetPowerLow}-${first.targetPowerHigh}w`;
+      return first?.targetZone || 'Zone 2';
+    }
     if (isHeartRateMode) {
       return getEasyHrRange();
     }
@@ -402,6 +442,11 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   };
 
   const getIdealPaceRange = () => {
+    if (isBike) {
+      const first = currentSession.intervals?.[0];
+      if (first?.targetPowerLow && first?.targetPowerHigh) return `${first.targetPowerLow}-${first.targetPowerHigh}w`;
+      return first?.targetZone || 'Zone 2';
+    }
     if (isHeartRateMode) {
       return getEasyHrRange();
     }
@@ -422,6 +467,11 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   };
 
   const getIntervalDisplayPace = (distanceMeters: number, paceFromSession?: string) => {
+    if (isBike) {
+      const int = currentSession.intervals?.find((x) => Number(x.distance) === Number(distanceMeters) || x.pace === paceFromSession);
+      if (int?.targetPowerLow && int?.targetPowerHigh) return `${int.targetPowerLow}-${int.targetPowerHigh}w`;
+      return int?.targetZone || 'Zone 2';
+    }
     if (isHeartRateMode) {
       return getEasyHrRange();
     }
@@ -455,7 +505,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-300 mt-2">{displayTitle}</p>
-          {forecast && !isTreadmillMode ? (
+          {forecast && !isBike && !isTreadmillMode ? (
             <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-full px-2.5 py-1">
               {(() => {
                 const Icon = getWeatherIcon(forecast.weatherCode);
@@ -508,17 +558,17 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       {cardOpen && <div className="px-6 py-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
           <div className="rounded-2xl bg-slate-50/85 dark:bg-slate-800/85 border border-slate-200/80 dark:border-slate-700/90 px-4 py-3.5">
-            <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">Distance</p>
-            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{currentSession.distance} km</p>
+            <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">{isBike ? 'Session Time' : 'Distance'}</p>
+            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{isBike ? formatDuration(currentSession.duration || 0) : `${currentSession.distance} km`}</p>
           </div>
           <div className="rounded-2xl bg-slate-50/85 dark:bg-slate-800/85 border border-slate-200/80 dark:border-slate-700/90 px-4 py-3.5">
             <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">Est. Time</p>
             <p className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1">{formatDuration(currentSession.duration || 0)}</p>
           </div>
           <div className={`rounded-2xl border px-4 py-3.5 ${tone.pace}`}>
-            <p className="text-[10px] uppercase tracking-wide font-semibold">{isHeartRateMode ? 'Target HR' : 'Target Pace'}</p>
-            <p className="text-xl font-bold mt-1 leading-none">{getPrimaryPaceRange()}{isHeartRateMode ? '' : '/km'}</p>
-            <p className="text-[11px] mt-1.5 opacity-80">{isHeartRateMode ? 'Trail mode · Z2 target' : `Ideal: ${getIdealPaceRange()}/km`}</p>
+            <p className="text-[10px] uppercase tracking-wide font-semibold">{isBike || isHeartRateMode ? (isBike ? 'Target Zone' : 'Target HR') : 'Target Pace'}</p>
+            <p className="text-xl font-bold mt-1 leading-none">{getPrimaryPaceRange()}{(isHeartRateMode || isBike) ? '' : '/km'}</p>
+            <p className="text-[11px] mt-1.5 opacity-80">{isBike ? 'Bike session target' : isHeartRateMode ? 'Trail mode · Z2 target' : `Ideal: ${getIdealPaceRange()}/km`}</p>
           </div>
         </div>
 
@@ -568,9 +618,9 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       }}
                       className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-40"
                     >
-                      <option value="road">Road</option>
-                      <option value="trail">Trail</option>
-                      <option value="treadmill">Treadmill</option>
+                      <option value="road">{isBike ? 'Road Bike' : 'Road'}</option>
+                      {!isBike ? <option value="trail">Trail</option> : null}
+                      <option value="treadmill">{isBike ? 'Stationary Bike' : 'Treadmill'}</option>
                     </select>
                   </div>
 
@@ -601,7 +651,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                     </div>
                   ) : (
                     <div className="text-xs text-slate-500 dark:text-slate-300">
-                      {isTrailMode ? 'Trail mode · HR Zone 2 target' : 'Road mode · weather-adjusted pace'}
+                      {isTrailMode ? 'Trail mode · HR Zone 2 target' : isBike ? 'Bike mode · zone/power targets' : 'Road mode · weather-adjusted pace'}
                     </div>
                   )}
                 </div>
@@ -610,21 +660,25 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
               {isEasy && (
                 <div className="flex items-end justify-between gap-3">
                   <div className="flex flex-col gap-1">
-                    <span className="text-[10px] text-slate-500 font-semibold uppercase">Easy distance (km)</span>
+                    <span className="text-[10px] text-slate-500 font-semibold uppercase">{isBike ? 'Easy duration (min)' : 'Easy distance (km)'}</span>
                     <input
                       type="number"
-                      value={currentSession.distance}
+                      value={isBike ? currentSession.duration : currentSession.distance}
                       min={0}
                       step={1}
-                      onChange={(e) => updateEasyDistance(Number(e.target.value))}
+                      onChange={(e) => {
+                        const v = Math.max(0, Number(e.target.value) || 0);
+                        if (isBike) pushUpdate(recalcDerived({ ...currentSession, duration: v, intervals: [{ distance: 0, durationSec: v * 60, count: 1, pace: '', rest: '0', description: currentSession.intervals?.[0]?.description || 'Zone 2', targetZone: currentSession.intervals?.[0]?.targetZone || 'Z2', targetPowerLow: currentSession.intervals?.[0]?.targetPowerLow, targetPowerHigh: currentSession.intervals?.[0]?.targetPowerHigh }] }));
+                        else updateEasyDistance(v);
+                      }}
                       className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-28"
                     />
                   </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-300">Subthreshold {thresholdPace}/km</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-300">{isBike ? 'Zone-based aerobic ride' : `Subthreshold ${thresholdPace}/km`}</div>
                 </div>
               )}
 
-              {isLongRun && currentSession.title.toLowerCase().includes('easy') && (
+              {isLongRun && !isBike && currentSession.title.toLowerCase().includes('easy') && (
                 <div className="flex items-end justify-between gap-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-slate-500 font-semibold uppercase">Long run distance (km)</span>
@@ -648,16 +702,33 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                   {currentSession.intervals!.map((int, i) => (
                     <div key={i} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
                       <div className="flex flex-col gap-1">
-                        <span className="text-[10px] text-slate-500 font-semibold uppercase">Distance</span>
-                        <select
-                          value={int.distance}
-                          onChange={(e) => updateInterval(i, 'distance', e.target.value)}
-                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
-                        >
-                          {[400, 600, 800, 1000, 1200, 1600, 2000, 3000, 5000].map((d) => (
-                            <option key={d} value={d}>{d}m</option>
-                          ))}
-                        </select>
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase">{isBike ? 'Interval time' : 'Distance'}</span>
+                        {isBike ? (
+                          <select
+                            value={int.durationSec || 360}
+                            onChange={(e) => {
+                              const sec = Math.max(60, Number(e.target.value) || 360);
+                              const nextIntervals = [...(currentSession.intervals || [])];
+                              nextIntervals[i] = { ...int, durationSec: sec };
+                              pushUpdate(recalcDerived({ ...currentSession, intervals: nextIntervals }));
+                            }}
+                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                          >
+                            {[120, 180, 240, 300, 360, 480, 600, 720, 900].map((s) => (
+                              <option key={s} value={s}>{formatSecondsLabel(s)}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <select
+                            value={int.distance}
+                            onChange={(e) => updateInterval(i, 'distance', e.target.value)}
+                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                          >
+                            {[400, 600, 800, 1000, 1200, 1600, 2000, 3000, 5000].map((d) => (
+                              <option key={d} value={d}>{d}m</option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-semibold uppercase">Reps</span>
@@ -685,9 +756,11 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-semibold uppercase">Target</span>
                         <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-bold text-slate-800 dark:text-slate-100">
-                          {isHeartRateMode
-                            ? getEasyHrRange()
-                            : getIntervalPaceRange(profile, Number(int.distance), effectivePaceCorrectionSec).range}
+                          {isBike
+                            ? (int.targetPowerLow && int.targetPowerHigh ? `${int.targetPowerLow}-${int.targetPowerHigh}w` : (int.targetZone || 'Zone 3-4'))
+                            : (isHeartRateMode
+                              ? getEasyHrRange()
+                              : getIntervalPaceRange(profile, Number(int.distance), effectivePaceCorrectionSec).range)}
                         </div>
                       </div>
                     </div>
@@ -722,9 +795,11 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                   ) : null}
                   {currentSession.intervals!.map((int, idx) => (
                     <div key={idx} className="text-xs text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5">
-                      <span className="font-semibold">{int.count} × {int.distance}m</span>
+                      <span className="font-semibold">{int.count} × {isBike ? formatSecondsLabel(int.durationSec || 0) : `${int.distance}m`}</span>
                       <span className="mx-2 text-slate-400">·</span>
-                      <span>{getIntervalDisplayPace(Number(int.distance), int.pace)}{isHeartRateMode ? '' : '/km'}</span>
+                      <span>{isBike
+                        ? (int.targetPowerLow && int.targetPowerHigh ? `${int.targetPowerLow}-${int.targetPowerHigh}w` : (int.targetZone || 'Zone 2'))
+                        : `${getIntervalDisplayPace(Number(int.distance), int.pace)}${isHeartRateMode ? '' : '/km'}`}</span>
                       <span className="mx-2 text-slate-400">·</span>
                       <span>Rest {int.rest}</span>
                     </div>
