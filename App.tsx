@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
-import { calculateVDOTFromRace, formatThresholdSessionTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
+import { calculateVDOTFromRace, formatThresholdSessionTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime, getTreadmillPaceDeltaSeconds, DEFAULT_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, MAX_TREADMILL_INCLINE } from './utils/calculations';
 import { deleteWorkoutFromIcu, syncWorkoutToIcu, syncWorkoutsBulkToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
@@ -56,6 +56,20 @@ const parseRestToSec = (rest: string): number => {
   if (v.endsWith('s')) return Number(v.replace('s', '')) || 0;
   if (v.endsWith('m')) return (Number(v.replace('m', '')) || 0) * 60;
   return 0;
+};
+const shiftPaceText = (pace: string, deltaSec: number): string => {
+  const value = (pace || '').trim();
+  if (!value) return value;
+  const hasPerKm = /\/km/i.test(value);
+  const cleaned = value.replace(/\/km/gi, '').trim();
+  const parts = cleaned.split('-').map((p) => p.trim()).filter(Boolean);
+  const shifted = parts.map((part) => {
+    const sec = parseTimeToSec(part);
+    if (sec <= 0) return part;
+    return secondsToTime(sec + deltaSec);
+  });
+  const joined = shifted.join('-');
+  return hasPerKm ? `${joined}/km` : joined;
 };
 
 const EMPTY_RUN_SCHEDULE: UserSchedule = {
@@ -329,24 +343,42 @@ const App: React.FC = () => {
     if (totalKm <= 0) return 0;
     return (subThresholdIntervalKm / totalKm) * 100;
   }, [plan, subThresholdIntervalKm]);
+  const getZone2Range = useCallback((): { low?: number; high?: number; label: string } => {
+    const maxHr = Number(profile.maxHR) || 0;
+    if (maxHr <= 0) return { label: 'Set Max HR in Settings' };
+    const low = Math.round(maxHr * 0.70);
+    const high = Math.round(maxHr * 0.78);
+    return { low, high, label: `Z2 ${low}-${high} bpm` };
+  }, [profile.maxHR]);
   const resolveSessionPaceCorrection = useCallback((session: WorkoutSession, weatherDeltaSec: number): number => {
-    if (session.type === WorkoutType.THRESHOLD && (session.environment || 'road') === 'treadmill') {
-      return -6;
-    }
-    if (session.type === WorkoutType.LONG_RUN && session.title.toLowerCase().includes('easy') && (session.environment || 'trail') === 'trail') {
+    const env = session.environment || 'road';
+    if (env === 'trail') {
       return 0;
+    }
+    if (env === 'treadmill') {
+      return getTreadmillPaceDeltaSeconds(session.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE);
     }
     return weatherDeltaSec;
   }, []);
   const applyDayWeatherToSession = useCallback((session: WorkoutSession, dayDeltaSec: number): WorkoutSession => {
+    const env = session.environment || 'road';
+    const useHeartRateTarget = env === 'trail';
+    const zone2 = getZone2Range();
+    const targetHrLow = useHeartRateTarget ? zone2.low : undefined;
+    const targetHrHigh = useHeartRateTarget ? zone2.high : undefined;
     const effectiveDeltaSec = resolveSessionPaceCorrection(session, dayDeltaSec);
     if (session.type === WorkoutType.EASY) {
       const easyRange = getEasyRunPaceRange(profile, effectiveDeltaSec);
       const easyCenter = easyRange.center;
       return {
         ...session,
+        useHeartRateTarget,
+        targetHrLow,
+        targetHrHigh,
         duration: Math.round(session.distance * (easyCenter / 60)),
-        description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
+        description: useHeartRateTarget
+          ? `Target HR: ${zone2.label}.`
+          : `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km${env === 'treadmill' ? ` · ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline` : ''}`,
       };
     }
 
@@ -381,30 +413,59 @@ const App: React.FC = () => {
 
       return {
         ...session,
+        useHeartRateTarget,
+        targetHrLow,
+        targetHrHigh,
         title: newIntervals.length
           ? formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0))
           : session.title,
         intervals: newIntervals,
         distance: sessionDistance,
         duration: sessionDuration,
-        warmup: `${wuKm}km easy pace`,
-        cooldown: `${cdKm}km easy pace`,
+        description: useHeartRateTarget
+          ? `Subthreshold session in trail mode. Target HR: ${zone2.label}.`
+          : `${session.description}${env === 'treadmill' ? ` Treadmill ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline.` : ''}`,
+        warmup: useHeartRateTarget ? `${wuKm}km Z2 HR` : `${wuKm}km easy pace`,
+        cooldown: useHeartRateTarget ? `${cdKm}km Z2 HR` : `${cdKm}km easy pace`,
       };
     }
 
-    if (session.type === WorkoutType.LONG_RUN && session.title.toLowerCase().includes('easy') && (session.environment || 'trail') === 'trail') {
+    if (session.type === WorkoutType.LONG_RUN) {
+      const easyRange = getEasyRunPaceRange(profile, effectiveDeltaSec);
+      const easyCenter = easyRange.center;
+      const adjustedIntervals = (session.intervals || []).map((int) => ({
+        ...int,
+        pace: useHeartRateTarget ? int.pace : shiftPaceText(int.pace || '', effectiveDeltaSec),
+      }));
+      const workSec = adjustedIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+        const repPaceSec = parsePaceRangeMidSec(int.pace || '');
+        return sum + (reps * distKm * repPaceSec);
+      }, 0);
+      const restSec = adjustedIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const perRest = parseRestToSec(int.rest || '');
+        return sum + (perRest * Math.max(0, reps - 1));
+      }, 0);
+      const warmupSec = parsePaceRangeMidSec(easyRange.low > 0 && easyRange.high > 0 ? `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}` : '') * Math.max(0, Number(profile.warmupDist) || 0);
+      const cooldownSec = parsePaceRangeMidSec(easyRange.low > 0 && easyRange.high > 0 ? `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}` : '') * Math.max(0, Number(profile.cooldownDist) || 0);
+      const estimatedDuration = workSec > 0 ? Math.round((workSec + restSec + warmupSec + cooldownSec) / 60) : Math.round(session.distance * (easyCenter / 60));
       return {
         ...session,
-        environment: 'trail',
-        useHeartRateTarget: true,
-        description: Number(profile.maxHR) > 0
-          ? `Continuous easy trail effort. Target HR ${Math.round(profile.maxHR * 0.70)}-${Math.round(profile.maxHR * 0.78)} bpm.`
-          : 'Continuous easy trail effort. Target HR in easy aerobic zone.',
+        useHeartRateTarget,
+        targetHrLow,
+        targetHrHigh,
+        intervals: adjustedIntervals,
+        duration: estimatedDuration,
+        description: useHeartRateTarget
+          ? `Long run in trail mode. Target HR: ${zone2.label}.`
+          : `${session.description}${env === 'treadmill' ? ` Treadmill ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline.` : ''}`,
       };
     }
 
     return session;
-  }, [profile, resolveSessionPaceCorrection]);
+  }, [getZone2Range, profile, resolveSessionPaceCorrection]);
 
   const handleGeneratePlan = () => {
     const normalized = normalizeTo5kProfile(profile);

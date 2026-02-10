@@ -49,7 +49,10 @@ export interface WorkoutSession {
   title: string;
   type: WorkoutType;
   environment?: 'road' | 'treadmill' | 'trail';
+  treadmillInclinePct?: number;
   useHeartRateTarget?: boolean;
+  targetHrLow?: number;
+  targetHrHigh?: number;
   distance: number;
   duration: number;
   description: string;

@@ -1,4 +1,7 @@
 import { UserProfile, WeeklyPlan, WorkoutType, WorkoutSession, DailyPlan, DayType } from '../types';
+export const MIN_TREADMILL_INCLINE = 3;
+export const MAX_TREADMILL_INCLINE = 15;
+export const DEFAULT_TREADMILL_INCLINE = 3;
 
 export const formatThresholdSessionTitle = (reps: number, distanceMeters: number): string => {
   const safeReps = Math.max(1, Math.round(Number(reps) || 1));
@@ -58,6 +61,13 @@ export const getWeatherPaceDeltaSeconds = (
 export const applyPaceCorrection = (paceSec: number, deltaSec: number): number => {
   if (!isFinite(paceSec) || paceSec <= 0) return 0;
   return Math.max(1, paceSec + deltaSec);
+};
+
+export const getTreadmillPaceDeltaSeconds = (inclinePct: number): number => {
+  const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(inclinePct) || DEFAULT_TREADMILL_INCLINE));
+  // 1% treadmill baseline is often close to outdoor effort; keep prior +6s/km benefit,
+  // then add climbing cost above 1%.
+  return Math.round(-6 + ((incline - 1) * 4));
 };
 
 export const predictRaceTime = (raceDistMeters: number, raceTimeStr: string, targetDistMeters: number): number => {
@@ -309,6 +319,8 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       title: formatThresholdSessionTitle(reps, dist),
       type: WorkoutType.THRESHOLD,
       environment: 'road',
+      treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
+      useHeartRateTarget: false,
       distance: Math.round(sessionDist * 10) / 10,
       duration: Math.round(sessionDist * (tPace / 60) * 1.05),
       description: `Strictly controlled sub-threshold. Stay below lactate turnpoint.`,
@@ -329,11 +341,12 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         id: `${id}-easy`,
         title: `Easy Long Run`,
         type: WorkoutType.LONG_RUN,
-        environment: 'trail',
-        useHeartRateTarget: true,
+        environment: 'road',
+        treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
+        useHeartRateTarget: false,
         distance: lrDist,
         duration: Math.round(lrDist * (easyPace / 60)),
-        description: `Continuous easy trail effort. Heart-rate guided endurance run.`,
+        description: `Continuous easy endurance run.`,
         intervals: [{ distance: lrDist * 1000, count: 1, pace: easyRangeText, rest: '0', description: 'Easy' }],
         warmup: 'Direct start', cooldown: 'Walk off'
       },
@@ -342,6 +355,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         title: `Progressive Long Run`,
         type: WorkoutType.LONG_RUN,
         environment: 'road',
+        treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
         useHeartRateTarget: false,
         distance: lrDist,
         duration: Math.round(lrDist * (steadyPaceSec / 60)),
@@ -358,6 +372,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         title: `3x5km MP Long Run`,
         type: WorkoutType.LONG_RUN,
         environment: 'road',
+        treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
         useHeartRateTarget: false,
         distance: Math.round((wu + cd + 15) * 10) / 10,
         duration: Math.round(15 * (mpSec / 60) + (wu + cd) * 5),
@@ -370,8 +385,11 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
     return { ...variants[0], variants };
   };
 
-  const createEasyRun = (id: string, dist: number): WorkoutSession => ({
+const createEasyRun = (id: string, dist: number): WorkoutSession => ({
     id: id, title: `Easy Run`, type: WorkoutType.EASY, distance: dist,
+    environment: 'road',
+    treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
+    useHeartRateTarget: false,
     duration: Math.round(dist * (easyPace / 60)),
     description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
     warmup: 'N/A', cooldown: 'N/A'

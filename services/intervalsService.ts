@@ -5,7 +5,7 @@ interface FitStepSpec {
   wktStepName: string;
   durationType: 'distance' | 'time' | 'repeatUntilStepsCmplt';
   durationValue: number;
-  targetType: 'speed' | 'open';
+  targetType: 'speed' | 'heartRate' | 'open';
   targetValue?: number;
   customTargetValueLow?: number;
   customTargetValueHigh?: number;
@@ -157,7 +157,8 @@ const buildFitStep = (
   name: string,
   duration: { durationType: 'distance' | 'time'; durationValue: number },
   intensity: NonNullable<FitStepSpec['intensity']>,
-  paceRange?: string
+  paceRange?: string,
+  heartRateRange?: { low: number; high: number }
 ): FitStepSpec => {
   const safeIntensity = (() => {
     // Compatibility mode: avoid known problematic active/interval mapping that can appear as "Other" in Garmin.
@@ -166,6 +167,18 @@ const buildFitStep = (
     if (intensity === 'recovery') return 'rest';
     return intensity;
   })();
+
+  if (heartRateRange && Number.isFinite(heartRateRange.low) && Number.isFinite(heartRateRange.high)) {
+    return {
+      wktStepName: name,
+      durationType: duration.durationType,
+      durationValue: duration.durationValue,
+      targetType: 'heartRate',
+      customTargetValueLow: Math.round(heartRateRange.low),
+      customTargetValueHigh: Math.round(heartRateRange.high),
+      intensity: safeIntensity,
+    };
+  }
 
   const speed = parsePaceRangeToSpeedRaw(paceRange);
   if (!speed) {
@@ -191,10 +204,13 @@ const buildFitStep = (
 
 const buildFitWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
   const steps: FitStepSpec[] = [];
+  const hrRange = session.useHeartRateTarget && session.targetHrLow && session.targetHrHigh
+    ? { low: session.targetHrLow, high: session.targetHrHigh }
+    : undefined;
 
   const warmup = parseDurationToFit(session.warmup);
   if (warmup) {
-    steps.push(buildFitStep('Warm Up', warmup, 'warmup'));
+    steps.push(buildFitStep('Warm Up', warmup, 'warmup', undefined, hrRange));
   }
 
   if (session.intervals?.length) {
@@ -207,9 +223,9 @@ const buildFitWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
       const recovery = parseDurationToFit(interval.rest || '');
       const blockStart = steps.length;
 
-      steps.push(buildFitStep('Run', repDuration, session.type === WorkoutType.THRESHOLD ? 'interval' : 'active', interval.pace));
+      steps.push(buildFitStep('Run', repDuration, session.type === WorkoutType.THRESHOLD ? 'interval' : 'active', interval.pace, hrRange));
       if (recovery) {
-        steps.push(buildFitStep('Recovery', recovery, 'recovery'));
+        steps.push(buildFitStep('Recovery', recovery, 'recovery', undefined, hrRange));
       }
 
       if (reps > 1) {
@@ -228,12 +244,12 @@ const buildFitWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
     const duration = distMeters > 0
       ? { durationType: 'distance' as const, durationValue: Math.round(distMeters * 100) }
       : { durationType: 'time' as const, durationValue: Math.max(60000, Math.round((Number(session.duration) || 1) * 60000)) };
-    steps.push(buildFitStep('Run', duration, 'active', extractEasyPaceFromDescription(session.description || '')));
+    steps.push(buildFitStep('Run', duration, 'active', extractEasyPaceFromDescription(session.description || ''), hrRange));
   }
 
   const cooldown = parseDurationToFit(session.cooldown);
   if (cooldown) {
-    steps.push(buildFitStep('Cool Down', cooldown, 'cooldown'));
+    steps.push(buildFitStep('Cool Down', cooldown, 'cooldown', undefined, hrRange));
   }
 
   return steps;
@@ -286,6 +302,9 @@ const buildFitWorkoutFileBase64 = (session: WorkoutSession): string => {
 const formatIcuWorkoutText = (session: WorkoutSession): string => {
   const title = getDynamicTitle(session);
   const chunks: string[] = [];
+  const hrToken = session.useHeartRateTarget
+    ? (session.targetHrLow && session.targetHrHigh ? `Z2 HR (${session.targetHrLow}-${session.targetHrHigh} bpm)` : 'Z2 HR')
+    : '';
 
   if (!isPlaceholderStep(session.warmup) && session.warmup) {
     chunks.push(`Wu ${normalizeEasyStep(session.warmup)}`);
@@ -296,7 +315,9 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
       const reps = Math.max(1, Number(int.count) || 1);
       const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
       const pace = normalizePaceRange(int.pace || '');
-      const runStep = `${distStr}${pace ? ` @ ${pace}` : ''} run`.trim();
+      const runStep = session.useHeartRateTarget
+        ? `${distStr} @ ${hrToken} run`.trim()
+        : `${distStr}${pace ? ` @ ${pace}` : ''} run`.trim();
       const recovery = normalizeRecoveryStep(int.rest || '');
 
       if (reps > 1) {
@@ -313,7 +334,9 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
     }
   } else {
     const easyPace = extractEasyPaceFromDescription(session.description || '');
-    const main = `${session.distance}km${easyPace ? ` @ ${easyPace}` : ''} run`;
+    const main = session.useHeartRateTarget
+      ? `${session.distance}km @ ${hrToken} run`
+      : `${session.distance}km${easyPace ? ` @ ${easyPace}` : ''} run`;
     chunks.push(main);
   }
 
