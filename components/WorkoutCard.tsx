@@ -80,7 +80,8 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     if (isTreadmillMode) return getTreadmillPaceDeltaSeconds(treadmillIncline);
     return paceCorrectionSec;
   }, [isTrailMode, isTreadmillMode, treadmillIncline, paceCorrectionSec]);
-  const getEasyHrRange = () => {
+  const getHrTargetLabel = () => {
+    if (isThreshold) return 'Zone 3';
     return 'Zone 2';
   };
   const getWeatherIcon = (weatherCode: number) => {
@@ -218,7 +219,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
         ...normalizedSession,
         duration: Math.round(normalizedSession.distance * (easyPace / 60)),
         description: normalizedSession.useHeartRateTarget
-          ? `Trail mode. Target HR: ${getEasyHrRange()}.`
+          ? `Trail mode. Target HR: ${getHrTargetLabel()}.`
           : `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
       };
     }
@@ -269,7 +270,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
         distance: sessionDistance,
         duration: sessionDuration,
         description: normalizedSession.useHeartRateTarget
-          ? `Subthreshold in trail mode. Target HR: ${getEasyHrRange()}.`
+          ? `Subthreshold in trail mode. Target HR: ${getHrTargetLabel()}.`
           : normalizedSession.description,
         warmup: normalizedSession.useHeartRateTarget ? `${wuKm}km Z2 HR` : `${wuKm}km easy pace`,
         cooldown: normalizedSession.useHeartRateTarget ? `${cdKm}km Z2 HR` : `${cdKm}km easy pace`,
@@ -284,7 +285,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
         ...normalizedSession,
         duration: isEasyLong ? Math.round(normalizedSession.distance * (easyCenter / 60)) : normalizedSession.duration,
         description: normalizedSession.useHeartRateTarget
-          ? `Trail mode long run. Target HR: ${getEasyHrRange()}.`
+          ? `Trail mode long run. Target HR: ${getHrTargetLabel()}.`
           : normalizedSession.description,
       };
     }
@@ -423,7 +424,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       return first?.targetZone || 'Zone 2';
     }
     if (isHeartRateMode) {
-      return getEasyHrRange();
+      return getHrTargetLabel();
     }
     if (isThreshold && currentSession.intervals?.length) {
       const dist = Number(currentSession.intervals[0].distance);
@@ -448,7 +449,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       return first?.targetZone || 'Zone 2';
     }
     if (isHeartRateMode) {
-      return getEasyHrRange();
+      return getHrTargetLabel();
     }
     if (isThreshold && currentSession.intervals?.length) {
       const dist = Number(currentSession.intervals[0].distance);
@@ -473,7 +474,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       return int?.targetZone || 'Zone 2';
     }
     if (isHeartRateMode) {
-      return getEasyHrRange();
+      return getHrTargetLabel();
     }
     if (isThreshold) {
       return getIntervalPaceRange(profile, Number(distanceMeters), effectivePaceCorrectionSec).range;
@@ -692,7 +693,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                     />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-300">
-                    {isTrailMode ? `Trail · HR guided (${getEasyHrRange()})` : isTreadmillMode ? `Treadmill ${treadmillIncline}% incline` : 'Road mode'}
+                    {isTrailMode ? `Trail · HR guided (${getHrTargetLabel()})` : isTreadmillMode ? `Treadmill ${treadmillIncline}% incline` : 'Road mode'}
                   </div>
                 </div>
               )}
@@ -759,7 +760,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                           {isBike
                             ? (int.targetPowerLow && int.targetPowerHigh ? `${int.targetPowerLow}-${int.targetPowerHigh}w` : (int.targetZone || 'Zone 3-4'))
                             : (isHeartRateMode
-                              ? getEasyHrRange()
+                              ? getHrTargetLabel()
                               : getIntervalPaceRange(profile, Number(int.distance), effectivePaceCorrectionSec).range)}
                         </div>
                       </div>

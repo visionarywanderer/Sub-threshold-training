@@ -357,8 +357,14 @@ const App: React.FC = () => {
     if (totalTrainingMinutes <= 0) return 0;
     return (subThresholdMinutes / totalTrainingMinutes) * 100;
   }, [subThresholdMinutes, totalTrainingMinutes]);
-  const getZone2Range = useCallback((): { low?: number; high?: number; label: string } => {
+  const getHrRangeForZone = useCallback((zone: 'Z2' | 'Z3'): { low?: number; high?: number; label: string } => {
     const maxHr = Number(profile.maxHR) || 0;
+    if (zone === 'Z3') {
+      if (maxHr <= 0) return { label: 'Zone 3' };
+      const low = Math.round(maxHr * 0.80);
+      const high = Math.round(maxHr * 0.87);
+      return { low, high, label: `Zone 3 (${low}-${high} bpm)` };
+    }
     if (maxHr <= 0) return { label: 'Zone 2' };
     const low = Math.round(maxHr * 0.70);
     const high = Math.round(maxHr * 0.78);
@@ -381,9 +387,10 @@ const App: React.FC = () => {
     }
     const env = session.environment || 'road';
     const useHeartRateTarget = env === 'trail';
-    const zone2 = getZone2Range();
-    const targetHrLow = useHeartRateTarget ? zone2.low : undefined;
-    const targetHrHigh = useHeartRateTarget ? zone2.high : undefined;
+    const hrZone = session.type === WorkoutType.THRESHOLD ? 'Z3' : 'Z2';
+    const hrRange = getHrRangeForZone(hrZone);
+    const targetHrLow = useHeartRateTarget ? hrRange.low : undefined;
+    const targetHrHigh = useHeartRateTarget ? hrRange.high : undefined;
     const effectiveDeltaSec = resolveSessionPaceCorrection(session, dayDeltaSec);
     if (session.type === WorkoutType.EASY) {
       const easyRange = getEasyRunPaceRange(profile, effectiveDeltaSec);
@@ -395,7 +402,7 @@ const App: React.FC = () => {
         targetHrHigh,
         duration: Math.round(session.distance * (easyCenter / 60)),
         description: useHeartRateTarget
-          ? `Target HR: ${zone2.label}.`
+          ? `Target HR: ${hrRange.label}.`
           : `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km${env === 'treadmill' ? ` · ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline` : ''}`,
       };
     }
@@ -441,7 +448,7 @@ const App: React.FC = () => {
         distance: sessionDistance,
         duration: sessionDuration,
         description: useHeartRateTarget
-          ? `Subthreshold session in trail mode. Target HR: ${zone2.label}.`
+          ? `Subthreshold session in trail mode. Target HR: ${hrRange.label}.`
           : `${session.description}${env === 'treadmill' ? ` Treadmill ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline.` : ''}`,
         warmup: useHeartRateTarget ? `${wuKm}km Z2 HR` : `${wuKm}km easy pace`,
         cooldown: useHeartRateTarget ? `${cdKm}km Z2 HR` : `${cdKm}km easy pace`,
@@ -477,13 +484,13 @@ const App: React.FC = () => {
         intervals: adjustedIntervals,
         duration: estimatedDuration,
         description: useHeartRateTarget
-          ? `Long run in trail mode. Target HR: ${zone2.label}.`
+          ? `Long run in trail mode. Target HR: ${hrRange.label}.`
           : `${session.description}${env === 'treadmill' ? ` Treadmill ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline.` : ''}`,
       };
     }
 
     return session;
-  }, [getZone2Range, profile, resolveSessionPaceCorrection]);
+  }, [getHrRangeForZone, profile, resolveSessionPaceCorrection]);
 
   const handleGeneratePlan = () => {
     const normalized = normalizeTo5kProfile(profile);
@@ -617,20 +624,27 @@ const App: React.FC = () => {
 
             <div className="relative">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                NorskFlow Run
+                NorskFlow
               </div>
               <h1 className="mt-5 text-3xl md:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                Norwegian Method Planner
+                Subthreshold Training Planner
               </h1>
               <p className="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-300 max-w-3xl">
-                Build and manage your week with subthreshold pacing, weather-adjusted guidance, editable workout steps, and Intervals.icu sync ready for Garmin.
+                NorskFlow brings the Norwegian single-method approach to subthreshold training across run, trail, treadmill, and cycling. Plan your week, customize each workout, and sync structured sessions to Intervals.icu for Garmin.
               </p>
+              <div className="mt-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+                <p className="font-semibold text-slate-800 dark:text-slate-100">What is the Norwegian subthreshold method?</p>
+                <p className="mt-1">It prioritizes controlled work below lactate turnpoint to accumulate high-quality volume with lower fatigue cost, improving aerobic power, repeatability, and consistency week after week.</p>
+              </div>
 
               <div className="mt-8 grid sm:grid-cols-2 gap-3 text-sm">
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Dynamic paces from your 5K benchmark + VDOT</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Weather-aware subthreshold adjustments with delta</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Drag and drop weekly plan with editable sessions</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Intervals.icu calendar sync with explicit workout steps</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Run + bike planning with per-day sport selection</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Road, trail, treadmill, and stationary bike environments</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Subthreshold workout editing with zone, pace, and optional FTP targets</div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Intervals.icu structured sync (FIT) designed for Garmin calendar and device workflows</div>
+              </div>
+              <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                Coming soon: swimming sessions and brick workouts for triathlon planning.
               </div>
 
               <div className="mt-10 flex flex-col sm:flex-row sm:items-center gap-4">
@@ -671,7 +685,7 @@ const App: React.FC = () => {
                 <path d="M2 12h4l2-4 3 8 2-4h9" />
               </svg>
             </div>
-            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">NorskFlow Run</h1>
+            <h1 className="font-bold text-xl tracking-tight text-norway-blue dark:text-sky-300">NorskFlow</h1>
           </div>
           
           <div className="flex items-center gap-4">
@@ -707,8 +721,8 @@ const App: React.FC = () => {
 
               <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
-                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">NorskFlow Run</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {profile.weeklyVolume}km. Total training {Math.round(totalTrainingMinutes)} min.</p>
+                  <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">NorskFlow</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {Math.round(profile.weeklyVolume)} min. Total training {Math.round(totalTrainingMinutes)} min.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
                       VDOT {vdot > 0 ? vdot.toFixed(1) : '--'}
@@ -882,7 +896,7 @@ const App: React.FC = () => {
                         <div className="space-y-6">
                             <h4 className="text-xs font-bold text-slate-400 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-700 pb-2">Volume Settings</h4>
                             <div>
-                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Weekly Target (km)</label>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Weekly Target (min)</label>
                                 <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
                             </div>
                             <div>
@@ -908,19 +922,23 @@ const App: React.FC = () => {
                             {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
                                 <div key={day} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
                                     <span className="font-bold text-slate-700 dark:text-slate-200 text-xs w-20">{day}</span>
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex gap-1 rounded-lg border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-900">
-                                        {(['run', 'bike'] as TrainingSport[]).map((sport) => (
-                                          <button
-                                            key={sport}
-                                            onClick={() => setProfile(p => ({ ...p, scheduleSport: { ...(p.scheduleSport || DEFAULT_SPORT_SCHEDULE), [day]: sport } }))}
-                                            className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase ${((profile.scheduleSport?.[day] || 'run') === sport) ? 'bg-norway-blue dark:bg-sky-500 text-white' : 'text-slate-500 dark:text-slate-300'}`}
-                                          >
-                                            {sport === 'run' ? 'Run' : 'Bike'}
-                                          </button>
-                                        ))}
+                                    {profile.schedule[day] !== DayType.REST ? (
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex gap-1 rounded-lg border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-900">
+                                          {(['run', 'bike'] as TrainingSport[]).map((sport) => (
+                                            <button
+                                              key={sport}
+                                              onClick={() => setProfile(p => ({ ...p, scheduleSport: { ...(p.scheduleSport || DEFAULT_SPORT_SCHEDULE), [day]: sport } }))}
+                                              className={`px-2.5 py-1 rounded-md text-[9px] font-bold uppercase ${((profile.scheduleSport?.[day] || 'run') === sport) ? 'bg-norway-blue dark:bg-sky-500 text-white' : 'text-slate-500 dark:text-slate-300'}`}
+                                            >
+                                              {sport === 'run' ? 'Run' : 'Bike'}
+                                            </button>
+                                          ))}
+                                        </div>
                                       </div>
-                                    </div>
+                                    ) : (
+                                      <div className="text-[10px] font-semibold uppercase text-slate-400 dark:text-slate-500">Rest</div>
+                                    )}
                                     <div className="flex gap-1 overflow-x-auto scrollbar-hide">
                                         {[DayType.REST, DayType.EASY, DayType.THRESHOLD, DayType.LONG_RUN].map(type => (
                                             <button 
@@ -941,6 +959,17 @@ const App: React.FC = () => {
                                 </div>
                             ))}
                         </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 p-4 text-sm text-slate-600 dark:text-slate-300">
+                      <p className="font-semibold text-slate-800 dark:text-slate-100">How to use NorskFlow</p>
+                      <ol className="mt-2 space-y-1 list-decimal list-inside">
+                        <li>Set your 5K benchmark, weekly target, and optional FTP.</li>
+                        <li>For each day, choose session type first. If not Rest, choose Run or Bike.</li>
+                        <li>Generate the plan, then adjust workout details directly on each card.</li>
+                        <li>Select surface/environment per card (road, trail, treadmill, stationary bike).</li>
+                        <li>Sync single days or schedule the full week to Intervals.icu for Garmin.</li>
+                      </ol>
                     </div>
 
                     <div className="pt-10 flex flex-col items-center gap-6">
