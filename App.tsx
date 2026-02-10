@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType } from './types';
-import { applyPaceCorrection, calculateVDOTFromRace, generatePlan, calculateThresholdPace, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
+import { calculateVDOTFromRace, formatThresholdSessionTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime } from './utils/calculations';
 import { deleteWorkoutFromIcu, syncWorkoutToIcu, syncWorkoutsBulkToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
@@ -35,6 +35,28 @@ const parseLocalDate = (isoDate: string): Date => {
   if (!year || !month || !day) return new Date(isoDate);
   return new Date(year, month - 1, day);
 };
+const parseTimeToSec = (timeStr: string): number => {
+  const cleaned = (timeStr || '').trim();
+  if (!cleaned) return 0;
+  const parts = cleaned.split(':').map((p) => Number(p));
+  if (parts.length === 2 && parts.every((p) => Number.isFinite(p))) return (parts[0] * 60) + parts[1];
+  if (parts.length === 3 && parts.every((p) => Number.isFinite(p))) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  return 0;
+};
+const parsePaceRangeMidSec = (pace: string): number => {
+  if (!pace) return 0;
+  const [low, high] = pace.split('-').map((p) => parseTimeToSec(p));
+  if (low > 0 && high > 0) return (low + high) / 2;
+  if (low > 0) return low;
+  return 0;
+};
+const parseRestToSec = (rest: string): number => {
+  if (!rest || rest === '0') return 0;
+  const v = rest.trim().toLowerCase();
+  if (v.endsWith('s')) return Number(v.replace('s', '')) || 0;
+  if (v.endsWith('m')) return (Number(v.replace('m', '')) || 0) * 60;
+  return 0;
+};
 
 const EMPTY_RUN_SCHEDULE: UserSchedule = {
   'Monday': DayType.REST, 'Tuesday': DayType.REST, 'Wednesday': DayType.REST,
@@ -60,6 +82,13 @@ interface WeatherSnapshot {
   humidityPct: number;
   windKmh: number;
 }
+interface DailyForecast {
+  date: string;
+  temperatureC: number;
+  humidityPct: number;
+  windKmh: number;
+  weatherCode: number;
+}
 
 type ThemeMode = 'light' | 'dark';
 
@@ -76,6 +105,7 @@ const App: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
+  const [forecastByDate, setForecastByDate] = useState<Record<string, DailyForecast>>({});
   const [weatherStatus, setWeatherStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'blocked'>('idle');
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -107,10 +137,13 @@ const App: React.FC = () => {
         try {
           const lat = position.coords.latitude;
           const lon = position.coords.longitude;
-          const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m&timezone=auto&forecast_days=1`;
-          const res = await fetch(url);
+          const currentUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m&timezone=auto&forecast_days=1`;
+          const dailyUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weather_code,temperature_2m_max,temperature_2m_min,relative_humidity_2m_mean,wind_speed_10m_max&forecast_days=16&timezone=auto`;
+          const [res, dailyRes] = await Promise.all([fetch(currentUrl), fetch(dailyUrl)]);
           if (!res.ok) throw new Error('weather_fetch_failed');
+          if (!dailyRes.ok) throw new Error('weather_forecast_fetch_failed');
           const data = await res.json();
+          const dailyData = await dailyRes.json();
           const current = data?.current;
           const temperatureC = Number(current?.temperature_2m);
           const dewPointC = Number(current?.dew_point_2m);
@@ -120,6 +153,36 @@ const App: React.FC = () => {
           if (![temperatureC, dewPointC, humidityPct, windKmh].every(v => isFinite(v))) throw new Error('weather_parse_failed');
 
           setWeather({ temperatureC, dewPointC, humidityPct, windKmh });
+
+          const daily = dailyData?.daily;
+          const dates: string[] = Array.isArray(daily?.time) ? daily.time : [];
+          const weatherCodes: number[] = Array.isArray(daily?.weather_code) ? daily.weather_code : [];
+          const maxTemps: number[] = Array.isArray(daily?.temperature_2m_max) ? daily.temperature_2m_max : [];
+          const minTemps: number[] = Array.isArray(daily?.temperature_2m_min) ? daily.temperature_2m_min : [];
+          const humidities: number[] = Array.isArray(daily?.relative_humidity_2m_mean) ? daily.relative_humidity_2m_mean : [];
+          const winds: number[] = Array.isArray(daily?.wind_speed_10m_max) ? daily.wind_speed_10m_max : [];
+          const nextForecast: Record<string, DailyForecast> = {};
+
+          for (let i = 0; i < dates.length; i += 1) {
+            const date = String(dates[i] || '');
+            if (!date) continue;
+            const maxT = Number(maxTemps[i]);
+            const minT = Number(minTemps[i]);
+            const meanTemp = Number.isFinite(maxT) && Number.isFinite(minT) ? (maxT + minT) / 2 : maxT;
+            const humidity = Number(humidities[i]);
+            const wind = Number(winds[i]);
+            const weatherCode = Number(weatherCodes[i]);
+            if (!Number.isFinite(meanTemp) || !Number.isFinite(humidity)) continue;
+
+            nextForecast[date] = {
+              date,
+              temperatureC: meanTemp,
+              humidityPct: humidity,
+              windKmh: Number.isFinite(wind) ? wind : 0,
+              weatherCode: Number.isFinite(weatherCode) ? weatherCode : 0,
+            };
+          }
+          setForecastByDate(nextForecast);
           setWeatherStatus('ready');
         } catch (e) {
           setWeatherStatus('error');
@@ -230,7 +293,7 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setIsAuthenticated(false);
     setProfile(EMPTY_RUN_PROFILE);
-    setPlan(generatePlan(EMPTY_RUN_PROFILE, weatherPaceDeltaSec));
+    setPlan(generatePlan(EMPTY_RUN_PROFILE, 0));
     setIntervalsConfig({ athleteId: '', apiKey: '', connected: false });
     googleButtonRenderedRef.current = false;
     if (window.google) window.google.accounts.id.disableAutoSelect();
@@ -238,10 +301,7 @@ const App: React.FC = () => {
 
   const currentThreshold = calculateThresholdPace(profile.raceDistance, profile.raceTime, profile);
   const vdot = calculateVDOTFromRace(profile.raceDistance, profile.raceTime);
-  const weatherPaceDeltaSec = weather
-    ? getWeatherPaceDeltaSeconds(currentThreshold, weather.temperatureC, weather.humidityPct, weather.windKmh)
-    : 0;
-  const correctedThreshold = applyPaceCorrection(currentThreshold, weatherPaceDeltaSec);
+  const correctedThreshold = currentThreshold;
   const subThresholdIntervalKm = useMemo(() => {
     if (!plan) return 0;
     return plan.days.reduce((sum, day) => {
@@ -269,10 +329,65 @@ const App: React.FC = () => {
     if (totalKm <= 0) return 0;
     return (subThresholdIntervalKm / totalKm) * 100;
   }, [plan, subThresholdIntervalKm]);
+  const applyDayWeatherToSession = useCallback((session: WorkoutSession, dayDeltaSec: number): WorkoutSession => {
+    if (session.type === WorkoutType.EASY) {
+      const easyRange = getEasyRunPaceRange(profile, dayDeltaSec);
+      const easyCenter = easyRange.center;
+      return {
+        ...session,
+        duration: Math.round(session.distance * (easyCenter / 60)),
+        description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
+      };
+    }
+
+    if (session.type === WorkoutType.THRESHOLD) {
+      const newIntervals = (session.intervals || []).map((int) => {
+        const dist = Number(int.distance) || 0;
+        const paceData = getIntervalPaceRange(profile, dist, dayDeltaSec);
+        return { ...int, distance: dist, pace: paceData.range, description: paceData.effort };
+      });
+
+      const wuKm = Math.max(0, Number(profile.warmupDist) || 0);
+      const cdKm = Math.max(0, Number(profile.cooldownDist) || 0);
+      const easyCenter = getEasyRunPaceRange(profile, dayDeltaSec).center;
+      const intervalKm = newIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+        return sum + (reps * distKm);
+      }, 0);
+      const workSec = newIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+        const repPaceSec = parsePaceRangeMidSec(int.pace || '');
+        return sum + (reps * distKm * repPaceSec);
+      }, 0);
+      const restSec = newIntervals.reduce((sum, int) => {
+        const reps = Math.max(1, Number(int.count) || 1);
+        const perRest = parseRestToSec(int.rest || '');
+        return sum + (perRest * Math.max(0, reps - 1));
+      }, 0);
+      const sessionDistance = Math.round((wuKm + cdKm + intervalKm) * 10) / 10;
+      const sessionDuration = Math.round((workSec + restSec + ((wuKm + cdKm) * easyCenter)) / 60);
+
+      return {
+        ...session,
+        title: newIntervals.length
+          ? formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0))
+          : session.title,
+        intervals: newIntervals,
+        distance: sessionDistance,
+        duration: sessionDuration,
+        warmup: `${wuKm}km easy pace`,
+        cooldown: `${cdKm}km easy pace`,
+      };
+    }
+
+    return session;
+  }, [profile]);
 
   const handleGeneratePlan = () => {
     const normalized = normalizeTo5kProfile(profile);
-    const newPlan = generatePlan(normalized, weatherPaceDeltaSec);
+    const newPlan = generatePlan(normalized, 0);
     setProfile(normalized);
     setPlan(newPlan);
     setActiveTab('plan');
@@ -298,6 +413,10 @@ const App: React.FC = () => {
         targetDate.setDate(targetDate.getDate() + i);
         const dateStr = formatLocalDate(targetDate);
         const dayLabel = WEEKDAY_ORDER[i] || day.day;
+        const dayForecast = forecastByDate[dateStr];
+        const dayPaceCorrection = dayForecast
+          ? getWeatherPaceDeltaSeconds(currentThreshold, dayForecast.temperatureC, dayForecast.humidityPct, dayForecast.windKmh)
+          : 0;
 
         // User preference: do not write rest days to Intervals/Garmin.
         if (!day.session) {
@@ -310,6 +429,7 @@ const App: React.FC = () => {
 
         const externalId = `norskflow:${profile.uid || 'anon'}:${dateStr}:${i}`;
         workoutItems.push({ index: i, dayLabel, externalId, dateStr });
+        newDays[i] = { ...day, session: applyDayWeatherToSession(day.session, dayPaceCorrection) };
       }
 
       const bulkResult = await syncWorkoutsBulkToIcu(
@@ -505,9 +625,7 @@ const App: React.FC = () => {
                 <div className="lg:text-center rounded-2xl border border-norway-blue/15 dark:border-sky-500/30 bg-norway-blue/[0.04] dark:bg-sky-500/[0.12] px-5 py-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Subthreshold Pace</p>
                   <p className="text-4xl md:text-5xl leading-none font-bold text-norway-blue dark:text-sky-300 mt-1">{secondsToTime(correctedThreshold)}<span className="text-xl md:text-2xl text-slate-500 dark:text-slate-300 font-medium">/km</span></p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-                    Base {secondsToTime(currentThreshold)}. Delta {weatherPaceDeltaSec >= 0 ? '+' : ''}{weatherPaceDeltaSec}s/km
-                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">Base {secondsToTime(currentThreshold)}</p>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/95 dark:bg-slate-800/90 px-5 py-3 min-w-[250px]">
@@ -565,14 +683,23 @@ const App: React.FC = () => {
               <div className="animate-in fade-in slide-in-from-bottom-2 space-y-4">
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={plan.days.map((d) => `day-${d.day}`)} strategy={verticalListSortingStrategy}>
-                    {plan.days.map((day, idx) => (
+                    {plan.days.map((day, idx) => {
+                      const dayDate = parseLocalDate(startDate);
+                      dayDate.setDate(dayDate.getDate() + idx);
+                      const dayDateStr = formatLocalDate(dayDate);
+                      const dayForecast = forecastByDate[dayDateStr];
+                      const dayPaceCorrection = dayForecast
+                        ? getWeatherPaceDeltaSeconds(currentThreshold, dayForecast.temperatureC, dayForecast.humidityPct, dayForecast.windKmh)
+                        : 0;
+                      return (
                       <SortableDayItem
                         key={day.day}
                         itemId={`day-${day.day}`}
                         dayLabel={WEEKDAY_ORDER[idx] || day.day}
                         day={day}
                         profile={profile}
-                        paceCorrectionSec={weatherPaceDeltaSec}
+                        paceCorrectionSec={dayPaceCorrection}
+                        forecast={dayForecast}
                         isSynced={!!day.session?.icuEventId}
                         onSyncSession={async () => {
                           if (!day.session) return;
@@ -583,10 +710,16 @@ const App: React.FC = () => {
                           }
                           const targetDate = parseLocalDate(startDate);
                           targetDate.setDate(targetDate.getDate() + idx);
-                          const result = await syncWorkoutToIcu(intervalsConfig, day.session, formatLocalDate(targetDate));
+                          const dateStr = formatLocalDate(targetDate);
+                          const dayForecast = forecastByDate[dateStr];
+                          const dayPaceCorrection = dayForecast
+                            ? getWeatherPaceDeltaSeconds(currentThreshold, dayForecast.temperatureC, dayForecast.humidityPct, dayForecast.windKmh)
+                            : 0;
+                          const correctedSession = applyDayWeatherToSession(day.session, dayPaceCorrection);
+                          const result = await syncWorkoutToIcu(intervalsConfig, correctedSession, dateStr);
                           if (result.ok && result.eventId) {
                             const newDays = [...plan.days];
-                            newDays[idx].session = { ...day.session, icuEventId: result.eventId };
+                            newDays[idx].session = { ...correctedSession, icuEventId: result.eventId };
                             setPlan({ ...plan, days: newDays });
                             setSyncStatus('success');
                             setSyncMessage(`${WEEKDAY_ORDER[idx] || day.day} synced to Intervals.icu.`);
@@ -608,7 +741,7 @@ const App: React.FC = () => {
                           setPlan({ ...plan, days: newDays });
                         }}
                       />
-                    ))}
+                    )})}
                   </SortableContext>
                 </DndContext>
               </div>
@@ -616,7 +749,7 @@ const App: React.FC = () => {
 
             {activeTab === 'pacing' && (
                <div className="animate-in fade-in slide-in-from-bottom-2">
-                 <PacingTable profile={profile} paceCorrectionSec={weatherPaceDeltaSec} />
+                 <PacingTable profile={profile} paceCorrectionSec={0} />
                </div>
             )}
 

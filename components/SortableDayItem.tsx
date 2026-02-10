@@ -3,7 +3,15 @@ import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
 import { DailyPlan, UserProfile, WorkoutSession } from '../types';
 import WorkoutCard from './WorkoutCard';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, Cloud, CloudRain, CloudSun, Snowflake, Sun } from 'lucide-react';
+
+interface DailyForecast {
+  date: string;
+  temperatureC: number;
+  humidityPct: number;
+  windKmh: number;
+  weatherCode: number;
+}
 
 interface SortableDayItemProps {
   itemId: string;
@@ -11,6 +19,7 @@ interface SortableDayItemProps {
   dayLabel: string;
   profile: UserProfile;
   paceCorrectionSec: number;
+  forecast?: DailyForecast;
   isSynced?: boolean;
   onSyncSession: () => void;
   onUpdateSession: (updated: WorkoutSession) => void;
@@ -22,6 +31,7 @@ const SortableDayItem: React.FC<SortableDayItemProps> = ({
   dayLabel,
   profile,
   paceCorrectionSec,
+  forecast,
   isSynced,
   onSyncSession,
   onUpdateSession,
@@ -31,6 +41,13 @@ const SortableDayItem: React.FC<SortableDayItemProps> = ({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+  };
+  const getWeatherIcon = (weatherCode: number) => {
+    if (weatherCode === 0) return Sun;
+    if ([1, 2].includes(weatherCode)) return CloudSun;
+    if ([3, 45, 48].includes(weatherCode)) return Cloud;
+    if ((weatherCode >= 71 && weatherCode <= 77) || (weatherCode >= 85 && weatherCode <= 86)) return Snowflake;
+    return CloudRain;
   };
 
   if (day.session) {
@@ -44,6 +61,7 @@ const SortableDayItem: React.FC<SortableDayItemProps> = ({
           session={{ ...day.session }}
           profile={profile}
           paceCorrectionSec={paceCorrectionSec}
+          forecast={forecast}
           isSynced={isSynced}
           dayLabel={dayLabel}
           dayTypeLabel={day.type}
@@ -69,6 +87,17 @@ const SortableDayItem: React.FC<SortableDayItemProps> = ({
           <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full border border-slate-300/70 dark:border-slate-600 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">{day.type}</span>
         </div>
         <p className="text-sm text-slate-500 dark:text-slate-300 mt-2">Rest or recovery day</p>
+        {forecast ? (
+          <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-full px-2.5 py-1">
+            {(() => {
+              const Icon = getWeatherIcon(forecast.weatherCode);
+              return <Icon size={12} />;
+            })()}
+            <span>{Math.round(forecast.temperatureC)}C</span>
+            <span className="text-slate-400">·</span>
+            <span>{Math.round(forecast.humidityPct)}%</span>
+          </div>
+        ) : null}
       </div>
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full border bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700">Not synced</span>

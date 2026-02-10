@@ -1,12 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, GripVertical, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical, RefreshCw, Cloud, CloudRain, CloudSun, Snowflake, Sun } from 'lucide-react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
 import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, formatThresholdSessionTitle, getEasyRunPaceRange, getIntervalPaceRange, secondsToTime } from '../utils/calculations';
+
+interface DailyForecast {
+  date: string;
+  temperatureC: number;
+  humidityPct: number;
+  windKmh: number;
+  weatherCode: number;
+}
 
 interface WorkoutCardProps {
   session: WorkoutSession;
   profile: UserProfile;
   paceCorrectionSec?: number;
+  forecast?: DailyForecast;
   dayLabel: string;
   dayTypeLabel: string;
   onUpdateSession: (session: WorkoutSession) => void;
@@ -20,6 +29,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   session: initialSession,
   profile,
   paceCorrectionSec = 0,
+  forecast,
   dayLabel,
   dayTypeLabel,
   onUpdateSession,
@@ -59,6 +69,13 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const isLongRun = currentSession.type === WorkoutType.LONG_RUN;
   const isThreshold = currentSession.type === WorkoutType.THRESHOLD;
   const displayDayTypeLabel = dayTypeLabel.replace('Threshold', 'Subthreshold');
+  const getWeatherIcon = (weatherCode: number) => {
+    if (weatherCode === 0) return Sun;
+    if ([1, 2].includes(weatherCode)) return CloudSun;
+    if ([3, 45, 48].includes(weatherCode)) return Cloud;
+    if ((weatherCode >= 71 && weatherCode <= 77) || (weatherCode >= 85 && weatherCode <= 86)) return Snowflake;
+    return CloudRain;
+  };
 
   const parseTimeToSec = (timeStr: string): number => {
     const cleaned = timeStr.trim();
@@ -329,6 +346,17 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-300 mt-2">{displayTitle}</p>
+          {forecast ? (
+            <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 rounded-full px-2.5 py-1">
+              {(() => {
+                const Icon = getWeatherIcon(forecast.weatherCode);
+                return <Icon size={12} />;
+              })()}
+              <span>{Math.round(forecast.temperatureC)}C</span>
+              <span className="text-slate-400">·</span>
+              <span>{Math.round(forecast.humidityPct)}%</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
