@@ -358,6 +358,10 @@ const App: React.FC = () => {
     if (totalTrainingMinutes <= 0) return 0;
     return (subThresholdMinutes / totalTrainingMinutes) * 100;
   }, [subThresholdMinutes, totalTrainingMinutes]);
+  const estimatedMinutesFromTarget = useMemo(() => {
+    const draft = generatePlan(normalizeTo5kProfile({ ...profile }), 0);
+    return Math.round(draft.days.reduce((sum, d) => sum + (d.session?.duration || 0), 0));
+  }, [profile]);
   const getHrRangeForZone = useCallback((zone: 'Z2' | 'Z3'): { low?: number; high?: number; label: string } => {
     const maxHr = Number(profile.maxHR) || 0;
     if (zone === 'Z3') {
@@ -378,10 +382,22 @@ const App: React.FC = () => {
       return 0;
     }
     if (env === 'treadmill') {
-      return weatherDeltaSec + getTreadmillPaceDeltaSeconds(session.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE);
+      const basePaceSec = (() => {
+        if (session.type === WorkoutType.THRESHOLD && session.intervals?.length) {
+          const dist = Math.max(0, Number(session.intervals[0].distance) || 0);
+          const paceRange = getIntervalPaceRange(profile, dist, 0).range;
+          const baseToken = paceRange.split('-')[0] || '';
+          return parseTimeToSec(baseToken);
+        }
+        if (session.type === WorkoutType.EASY || session.type === WorkoutType.LONG_RUN) {
+          return getEasyRunPaceRange(profile, 0).center;
+        }
+        return currentThreshold;
+      })();
+      return weatherDeltaSec + getTreadmillPaceDeltaSeconds(session.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE, basePaceSec);
     }
     return weatherDeltaSec;
-  }, []);
+  }, [currentThreshold, profile]);
   const applyDayWeatherToSession = useCallback((session: WorkoutSession, dayDeltaSec: number): WorkoutSession => {
     if ((session.sport || 'run') === 'bike') {
       return session;
@@ -930,7 +946,7 @@ const App: React.FC = () => {
                                   <div className="flex items-center gap-2">
                                     <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
                                     <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                                      ~{Math.round((plan?.days.reduce((sum, d) => sum + (d.session?.duration || 0), 0) || 0))} min
+                                      ~{estimatedMinutesFromTarget} min
                                     </span>
                                   </div>
                                 </div>

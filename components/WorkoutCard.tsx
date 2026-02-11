@@ -674,6 +674,35 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       }}
                       className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-28"
                     />
+                    <input
+                      type="range"
+                      min={isBike ? 10 : 4}
+                      max={isBike ? 220 : 30}
+                      step={1}
+                      value={Math.round(currentSession.distance)}
+                      onChange={(e) => {
+                        const v = Math.max(0, Number(e.target.value) || 0);
+                        if (isBike) {
+                          pushUpdate(recalcDerived({
+                            ...currentSession,
+                            distance: v,
+                            intervals: [{
+                              distance: Math.round(v * 1000),
+                              count: 1,
+                              pace: '',
+                              rest: '0',
+                              description: currentSession.intervals?.[0]?.description || 'Zone 2',
+                              targetZone: currentSession.intervals?.[0]?.targetZone || 'Z2',
+                              targetPowerLow: currentSession.intervals?.[0]?.targetPowerLow,
+                              targetPowerHigh: currentSession.intervals?.[0]?.targetPowerHigh
+                            }]
+                          }));
+                        } else {
+                          updateEasyDistance(v);
+                        }
+                      }}
+                      className="w-56 accent-norway-blue mt-1"
+                    />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-300">{isBike ? 'Zone-based aerobic ride' : `Subthreshold ${thresholdPace}/km`}</div>
                 </div>
@@ -690,6 +719,15 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                       step={1}
                       onChange={(e) => updateEasyLongRunDistance(Number(e.target.value))}
                       className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-32"
+                    />
+                    <input
+                      type="range"
+                      min={15}
+                      max={60}
+                      step={1}
+                      value={Math.round(currentSession.distance)}
+                      onChange={(e) => updateEasyLongRunDistance(Number(e.target.value))}
+                      className="w-56 accent-norway-blue mt-1"
                     />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-300">

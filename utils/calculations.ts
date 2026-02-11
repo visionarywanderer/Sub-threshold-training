@@ -63,13 +63,20 @@ export const applyPaceCorrection = (paceSec: number, deltaSec: number): number =
   return Math.max(1, paceSec + deltaSec);
 };
 
-export const getTreadmillPaceDeltaSeconds = (inclinePct: number): number => {
+export const getTreadmillPaceDeltaSeconds = (inclinePct: number, basePaceSec = 300): number => {
   const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(inclinePct) || DEFAULT_TREADMILL_INCLINE));
-  if (incline <= 2) return 0;
-  // Strong uphill cost from 3-15% to avoid unrealistic fast paces.
-  // 3% ~= +20s/km, 5% ~= +33s/km, 10% ~= +72s/km, 15% ~= +128s/km.
-  const n = incline - 3;
-  return Math.round(20 + (n * 5) + (0.6 * n * n));
+  if (!Number.isFinite(basePaceSec) || basePaceSec <= 0) return 0;
+  const g = incline / 100;
+
+  // Standard treadmill grade conversion using equal oxygen-cost approximation
+  // from ACSM running equation terms:
+  // 0.2 * v_flat = (0.2 + 0.9 * grade) * v_grade
+  // pace is inverse of speed.
+  const vFlat = 1000 / (basePaceSec / 60); // m/min
+  const vGrade = (0.2 * vFlat) / (0.2 + (0.9 * g));
+  if (!Number.isFinite(vGrade) || vGrade <= 0) return 0;
+  const gradePaceSec = (1000 / vGrade) * 60;
+  return Math.round(gradePaceSec - basePaceSec);
 };
 
 export const predictRaceTime = (raceDistMeters: number, raceTimeStr: string, targetDistMeters: number): number => {
