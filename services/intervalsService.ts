@@ -231,7 +231,7 @@ const buildFitWorkoutSteps = (session: WorkoutSession): FitStepSpec[] => {
     for (const interval of session.intervals) {
       const reps = Math.max(1, Number(interval.count) || 1);
       const repDistance = Math.max(0, Number(interval.distance) || 0);
-      const repDuration = (isBike || (Number(interval.durationSec) || 0) > 0)
+      const repDuration = ((Number(interval.durationSec) || 0) > 0)
         ? { durationType: 'time' as const, durationValue: Math.max(1000, Math.round((Number(interval.durationSec) || 60) * 1000)) }
         : repDistance > 0
           ? { durationType: 'distance' as const, durationValue: Math.round(repDistance * 100) }
@@ -335,7 +335,7 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   if (session.intervals && session.intervals.length > 0) {
     for (const int of session.intervals) {
       const reps = Math.max(1, Number(int.count) || 1);
-      const distStr = isBike ? `${Math.round((Number(int.durationSec) || 0) / 60)}m` : (int.distance > 0 ? kmTokenFromMeters(int.distance) : '');
+      const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
       const pace = normalizePaceRange(int.pace || '');
       const runStep = isBike
         ? `${distStr} ${int.targetPowerLow && int.targetPowerHigh ? `@ ${int.targetPowerLow}-${int.targetPowerHigh}w` : `@ ${int.targetZone || 'Z2'}`} ride`.trim()

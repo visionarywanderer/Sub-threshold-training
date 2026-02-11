@@ -65,8 +65,7 @@ export const applyPaceCorrection = (paceSec: number, deltaSec: number): number =
 
 export const getTreadmillPaceDeltaSeconds = (inclinePct: number): number => {
   const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(inclinePct) || DEFAULT_TREADMILL_INCLINE));
-  if (incline <= 1) return -6;
-  if (incline === 2) return 4;
+  if (incline <= 2) return 0;
   // Strong uphill cost from 3-15% to avoid unrealistic fast paces.
   // 3% ~= +20s/km, 5% ~= +33s/km, 10% ~= +72s/km, 15% ~= +128s/km.
   const n = incline - 3;
@@ -294,27 +293,43 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   const easyRange = getEasyRunPaceRange(profile, correctionSec);
   const easyPace = easyRange.center;
   const easyRangeText = `${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}`;
-  const targetMinutes = Math.max(0, Number(profile.weeklyVolume) || 0);
+  const targetKm = Math.max(0, Number(profile.weeklyVolume) || 0);
   const wu = profile.warmupDist;
   const cd = profile.cooldownDist;
 
-  const lrMinutes = Math.max(75, Math.round(targetMinutes * 0.25));
-  const lrDist = Math.max(12, Math.round((lrMinutes * 60) / Math.max(1, easyPace)));
-  const thresholdCount = Object.values(profile.schedule).filter(t => t === DayType.THRESHOLD).length;
+  const thresholdTemplates = [
+    { reps: 5, dist: 2000, rest: '60s' }, // 5x2km
+    { reps: 8, dist: 1000, rest: '60s' }, // 8x1km
+    { reps: 3, dist: 3000, rest: '90s' }, // 3x3km
+  ];
+  const thresholdDays = Object.entries(profile.schedule)
+    .filter(([, t]) => t === DayType.THRESHOLD)
+    .map(([day]) => day);
+  const thresholdSessionDists = thresholdDays.map((_, idx) => {
+    const tpl = thresholdTemplates[idx % thresholdTemplates.length];
+    return wu + cd + ((tpl.reps * tpl.dist) / 1000);
+  });
+  const maxThresholdDist = thresholdSessionDists.length ? Math.max(...thresholdSessionDists) : 0;
 
-  const defaultWorkDistKm = 10;
-  const estThresholdSessionMinutes = Math.round((wu + cd + defaultWorkDistKm) * (tPace / 60) * 1.05);
-  const totalFixedMinutes = (thresholdCount * estThresholdSessionMinutes) + Math.round(lrDist * (easyPace / 60));
-  const remainingMinutes = Math.max(0, targetMinutes - totalFixedMinutes);
+  let lrDist = Math.max(15, Math.round(targetKm * 0.28));
+  lrDist = Math.max(lrDist, maxThresholdDist + 1);
   const easyDaysCount = Object.values(profile.schedule).filter(t => t === DayType.EASY).length;
-  const easyMinutes = easyDaysCount > 0 ? Math.round(remainingMinutes / easyDaysCount) : 0;
-  const easyDist = easyDaysCount > 0 ? Math.max(4, Math.round((easyMinutes * 60) / Math.max(1, easyPace))) : 0;
+  const minEasyDist = easyDaysCount > 0 ? 6 : 0;
+  lrDist = Math.max(lrDist, minEasyDist + 1);
+
+  const thresholdTotalKm = thresholdSessionDists.reduce((a, b) => a + b, 0);
+  const easyDays = Object.entries(profile.schedule).filter(([, t]) => t === DayType.EASY).map(([d]) => d);
+  const minEasyTotalKm = easyDays.length * minEasyDist;
+  const baseFixedKm = thresholdTotalKm + lrDist + minEasyTotalKm;
+  const remainingKm = Math.max(0, targetKm - baseFixedKm);
+  const easyBonusPerDay = easyDays.length > 0 ? (remainingKm / easyDays.length) : 0;
+  const easyDist = easyDays.length > 0 ? Math.max(minEasyDist, Math.round((minEasyDist + easyBonusPerDay) * 10) / 10) : 0;
 
   const createThresholdSession = (id: string, dayName: string): WorkoutSession => {
-    let dist = 1000;
-    let reps = 10;
-    if (dayName === 'Thursday') { dist = 2000; reps = 5; }
-    if (dayName === 'Sunday') { dist = 3000; reps = 3; }
+    const templateIdx = Math.max(0, thresholdDays.indexOf(dayName));
+    const tpl = thresholdTemplates[templateIdx % thresholdTemplates.length];
+    const dist = tpl.dist;
+    const reps = tpl.reps;
 
     const paceData = getIntervalPaceRange(profile, dist, correctionSec);
     const sessionDist = wu + cd + (reps * dist / 1000);
@@ -331,7 +346,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       duration: Math.round(sessionDist * (tPace / 60) * 1.05),
       description: `Strictly controlled sub-threshold. Stay below lactate turnpoint.`,
       intervals: [{
-        distance: dist, count: reps, pace: paceData.range, rest: '60s', description: paceData.effort
+        distance: dist, count: reps, pace: paceData.range, rest: tpl.rest, description: paceData.effort
       }],
       warmup: `${wu}km easy pace`,
       cooldown: `${cd}km easy pace`
@@ -403,8 +418,14 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
     description: `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km`,
     warmup: 'N/A', cooldown: 'N/A'
   });
+  const bikeSpeedKmh = (type: WorkoutType): number => {
+    if (type === WorkoutType.THRESHOLD) return 34;
+    if (type === WorkoutType.LONG_RUN) return 31;
+    return 30;
+  };
   const createBikeEasy = (id: string): WorkoutSession => {
-    const duration = Math.max(45, Math.round(easyMinutes || 60));
+    const runEquivalentMin = Math.round(easyDist * (easyPace / 60));
+    const distanceKm = Math.max(20, Math.round((runEquivalentMin / 60) * bikeSpeedKmh(WorkoutType.EASY)));
     return {
       id,
       title: 'Easy Ride',
@@ -413,40 +434,44 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       environment: 'road',
       treadmillInclinePct: 0,
       useHeartRateTarget: true,
-      distance: 0,
-      duration,
+      distance: distanceKm,
+      duration: runEquivalentMin,
       description: profile.ftp && profile.ftp > 0
         ? `Zone 2 endurance ride (${Math.round(profile.ftp * 0.56)}-${Math.round(profile.ftp * 0.75)}w).`
         : 'Zone 2 endurance ride.',
-      intervals: [{ distance: 0, durationSec: duration * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }],
+      intervals: [{ distance: distanceKm * 1000, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }],
       warmup: '10m easy spin',
       cooldown: '5m easy spin',
     };
   };
   const createBikeThreshold = (id: string, dayName: string): WorkoutSession => {
-    const mainRepSec = dayName === 'Thursday' ? 8 * 60 : dayName === 'Sunday' ? 10 * 60 : 6 * 60;
-    const reps = dayName === 'Thursday' ? 5 : dayName === 'Sunday' ? 4 : 6;
+    const templateIdx = Math.max(0, thresholdDays.indexOf(dayName));
+    const tpl = thresholdTemplates[templateIdx % thresholdTemplates.length];
+    const reps = tpl.reps;
+    const runPace = getIntervalPaceRange(profile, tpl.dist, correctionSec).range.split('-')[0];
+    const runRepSec = timeToSeconds(runPace) * (tpl.dist / 1000);
+    const bikeRepKm = ((runRepSec / 3600) * bikeSpeedKmh(WorkoutType.THRESHOLD));
+    const bikeRepMeters = Math.max(1000, Math.round(bikeRepKm * 1000));
     const rest = '120s';
-    const workMinutes = Math.round((mainRepSec * reps) / 60);
+    const workMinutes = Math.round(((runRepSec * reps) / 60));
     const duration = 15 + workMinutes + (Math.max(0, reps - 1) * 2) + 10;
     const ftp = Number(profile.ftp) || 0;
     const targetPowerLow = ftp > 0 ? Math.round(ftp * 0.92) : undefined;
     const targetPowerHigh = ftp > 0 ? Math.round(ftp * 0.98) : undefined;
     return {
       id,
-      title: `SubT ${reps}x${Math.round(mainRepSec / 60)}min`,
+      title: `SubT ${reps}x${Math.round((bikeRepMeters / 1000) * 10) / 10}km`,
       type: WorkoutType.THRESHOLD,
       sport: 'bike',
       environment: 'road',
       useHeartRateTarget: true,
-      distance: 0,
+      distance: Math.round(((bikeRepMeters * reps) / 1000) * 10) / 10,
       duration,
       description: ftp > 0
         ? `Subthreshold cycling. ${targetPowerLow}-${targetPowerHigh}w (92-98% FTP).`
         : 'Subthreshold cycling. Zone 3 effort.',
       intervals: [{
-        distance: 0,
-        durationSec: mainRepSec,
+        distance: bikeRepMeters,
         count: reps,
         pace: '',
         rest,
@@ -471,7 +496,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       distance: 0,
       duration: 120,
       description: ftp > 0 ? `Aerobic long ride ${Math.round(ftp * 0.56)}-${Math.round(ftp * 0.75)}w.` : 'Aerobic long ride in Zone 2.',
-      intervals: [{ distance: 0, durationSec: 120 * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }],
+      intervals: [{ distance: Math.round((120 / 60) * bikeSpeedKmh(WorkoutType.LONG_RUN) * 1000), count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }],
       warmup: '10m easy spin',
       cooldown: '5m easy spin',
     };
@@ -486,9 +511,9 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       duration: 120,
       description: ftp > 0 ? `Progressive ride with tempo finish (${Math.round(ftp * 0.8)}-${Math.round(ftp * 0.88)}w).` : 'Progressive ride finishing upper aerobic.',
       intervals: [
-        { distance: 0, durationSec: 60 * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' },
-        { distance: 0, durationSec: 36 * 60, count: 1, pace: '', rest: '0', description: ftp > 0 ? `${Math.round(ftp * 0.8)}-${Math.round(ftp * 0.88)}w` : 'Zone 3', targetZone: 'Z3', targetPowerLow: ftp > 0 ? Math.round(ftp * 0.8) : undefined, targetPowerHigh: ftp > 0 ? Math.round(ftp * 0.88) : undefined },
-        { distance: 0, durationSec: 24 * 60, count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }
+        { distance: Math.round((60 / 60) * bikeSpeedKmh(WorkoutType.LONG_RUN) * 1000), count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' },
+        { distance: Math.round((36 / 60) * bikeSpeedKmh(WorkoutType.LONG_RUN) * 1000), count: 1, pace: '', rest: '0', description: ftp > 0 ? `${Math.round(ftp * 0.8)}-${Math.round(ftp * 0.88)}w` : 'Zone 3', targetZone: 'Z3', targetPowerLow: ftp > 0 ? Math.round(ftp * 0.8) : undefined, targetPowerHigh: ftp > 0 ? Math.round(ftp * 0.88) : undefined },
+        { distance: Math.round((24 / 60) * bikeSpeedKmh(WorkoutType.LONG_RUN) * 1000), count: 1, pace: '', rest: '0', description: 'Zone 2', targetZone: 'Z2' }
       ],
       warmup: '10m easy spin',
       cooldown: '5m easy spin',
@@ -503,7 +528,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       distance: 0,
       duration: 130,
       description: ftp > 0 ? `3x20 min tempo at ${Math.round(ftp * 0.85)}-${Math.round(ftp * 0.92)}w.` : '3x20 min tempo in Zone 3.',
-      intervals: [{ distance: 0, durationSec: 20 * 60, count: 3, pace: '', rest: '300s', description: ftp > 0 ? `${Math.round(ftp * 0.85)}-${Math.round(ftp * 0.92)}w` : 'Zone 3', targetZone: 'Z3', targetPowerLow: ftp > 0 ? Math.round(ftp * 0.85) : undefined, targetPowerHigh: ftp > 0 ? Math.round(ftp * 0.92) : undefined }],
+      intervals: [{ distance: Math.round((20 / 60) * bikeSpeedKmh(WorkoutType.LONG_RUN) * 1000), count: 3, pace: '', rest: '300s', description: ftp > 0 ? `${Math.round(ftp * 0.85)}-${Math.round(ftp * 0.92)}w` : 'Zone 3', targetZone: 'Z3', targetPowerLow: ftp > 0 ? Math.round(ftp * 0.85) : undefined, targetPowerHigh: ftp > 0 ? Math.round(ftp * 0.92) : undefined }],
       warmup: '15m easy spin',
       cooldown: '10m easy spin',
     };
@@ -523,5 +548,15 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   });
 
   const actualTotal = dailyPlans.reduce((sum, d) => sum + (d.session?.distance || 0), 0);
-  return { totalDistance: Math.round(actualTotal * 10) / 10, days: dailyPlans };
+  if (easyDays.length > 0 && actualTotal !== targetKm) {
+    const delta = targetKm - actualTotal;
+    const perEasyDelta = delta / easyDays.length;
+    dailyPlans.forEach((d) => {
+      if (d.session?.type === WorkoutType.EASY) {
+        d.session.distance = Math.max(4, Math.round((d.session.distance + perEasyDelta) * 10) / 10);
+      }
+    });
+  }
+  const newTotal = dailyPlans.reduce((sum, d) => sum + (d.session?.distance || 0), 0);
+  return { totalDistance: Math.round(newTotal * 10) / 10, days: dailyPlans };
 };

@@ -342,8 +342,9 @@ const App: React.FC = () => {
       const sessionIntervalMinutes = session.intervals.reduce((acc, int) => {
         const reps = Math.max(1, Number(int.count) || 1);
         if ((session.sport || 'run') === 'bike') {
-          const perRepSec = Math.max(0, Number(int.durationSec) || 0);
-          return acc + ((perRepSec * reps) / 60);
+          const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+          const bikeSpeedKmh = session.type === WorkoutType.THRESHOLD ? 34 : 31;
+          return acc + ((distKm * reps / bikeSpeedKmh) * 60);
         }
         const distanceM = Math.max(0, Number(int.distance) || 0);
         const paceMid = parsePaceRangeMidSec(int.pace || '');
@@ -377,7 +378,7 @@ const App: React.FC = () => {
       return 0;
     }
     if (env === 'treadmill') {
-      return getTreadmillPaceDeltaSeconds(session.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE);
+      return weatherDeltaSec + getTreadmillPaceDeltaSeconds(session.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE);
     }
     return weatherDeltaSec;
   }, []);
@@ -661,6 +662,25 @@ const App: React.FC = () => {
               </div>
             </div>
           </section>
+          <section className="mt-8 grid md:grid-cols-2 gap-6">
+            <article className="rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-6">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Why Subthreshold Works</h3>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
+                <li>Higher quality volume with lower fatigue than all-out interval blocks.</li>
+                <li>Consistent week-over-week progression without excessive recovery cost.</li>
+                <li>Strong aerobic gains that transfer to road, trail, and triathlon prep.</li>
+              </ul>
+            </article>
+            <article className="rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-6">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">What You Can Do In NorskFlow</h3>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
+                <li>Plan weekly run and bike sessions with road/trail/treadmill/stationary options.</li>
+                <li>Use weather-aware pace guidance and structured step editing.</li>
+                <li>Sync structured FIT workouts to Intervals.icu for Garmin execution.</li>
+                <li>Coming soon: swimming and brick workout blocks for triathlon.</li>
+              </ul>
+            </article>
+          </section>
         </main>
       </div>
     );
@@ -722,7 +742,7 @@ const App: React.FC = () => {
               <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                 <div className="min-w-0">
                   <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">NorskFlow</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {Math.round(profile.weeklyVolume)} min. Total training {Math.round(totalTrainingMinutes)} min.</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Week target {Math.round(profile.weeklyVolume)} km. Total training {Math.round(totalTrainingMinutes)} min.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="inline-flex items-center px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 text-xs font-medium text-slate-600 dark:text-slate-300">
                       VDOT {vdot > 0 ? vdot.toFixed(1) : '--'}
@@ -896,8 +916,24 @@ const App: React.FC = () => {
                         <div className="space-y-6">
                             <h4 className="text-xs font-bold text-slate-400 dark:text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-700 pb-2">Volume Settings</h4>
                             <div>
-                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Weekly Target (min)</label>
-                                <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">Weekly Target (km)</label>
+                                <div className="space-y-2">
+                                  <input
+                                    type="range"
+                                    min={20}
+                                    max={180}
+                                    step={1}
+                                    value={profile.weeklyVolume}
+                                    onChange={(e) => setProfile((p) => ({ ...p, weeklyVolume: Number(e.target.value) || 0 }))}
+                                    className="w-full accent-norway-blue"
+                                  />
+                                  <div className="flex items-center gap-2">
+                                    <input type="number" name="weeklyVolume" value={profile.weeklyVolume} onChange={handleNumberChange} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
+                                    <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                      ~{Math.round((plan?.days.reduce((sum, d) => sum + (d.session?.duration || 0), 0) || 0))} min
+                                    </span>
+                                  </div>
+                                </div>
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">FTP (Optional)</label>
