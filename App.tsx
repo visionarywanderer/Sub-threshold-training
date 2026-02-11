@@ -81,9 +81,31 @@ const EMPTY_RUN_SCHEDULE: UserSchedule = {
   'Monday': DayType.REST, 'Tuesday': DayType.REST, 'Wednesday': DayType.REST,
   'Thursday': DayType.REST, 'Friday': DayType.REST, 'Saturday': DayType.REST, 'Sunday': DayType.REST
 };
+const INTERMEDIATE_RUN_SCHEDULE: UserSchedule = {
+  'Monday': DayType.REST,
+  'Tuesday': DayType.THRESHOLD,
+  'Wednesday': DayType.EASY,
+  'Thursday': DayType.THRESHOLD,
+  'Friday': DayType.EASY,
+  'Saturday': DayType.LONG_RUN,
+  'Sunday': DayType.THRESHOLD,
+};
 const DEFAULT_SPORT_SCHEDULE: Record<string, TrainingSport> = {
   'Monday': 'run', 'Tuesday': 'run', 'Wednesday': 'run',
   'Thursday': 'run', 'Friday': 'run', 'Saturday': 'run', 'Sunday': 'run'
+};
+const INTERMEDIATE_PROFILE_TEMPLATE: UserProfile = {
+  name: 'Athlete',
+  raceDistance: FIVE_K_DISTANCE,
+  raceTime: '19:30',
+  maxHR: 0,
+  ftp: 0,
+  weeklyVolume: 70,
+  unit: DistanceUnit.KM,
+  schedule: INTERMEDIATE_RUN_SCHEDULE,
+  scheduleSport: DEFAULT_SPORT_SCHEDULE,
+  warmupDist: 2,
+  cooldownDist: 1,
 };
 
 const EMPTY_RUN_PROFILE: UserProfile = {
@@ -239,7 +261,7 @@ const App: React.FC = () => {
       const userProfile = savedProfile
         ? normalizeTo5kProfile(JSON.parse(savedProfile))
         : normalizeTo5kProfile({
-            ...EMPTY_RUN_PROFILE,
+            ...INTERMEDIATE_PROFILE_TEMPLATE,
             uid,
             email: userData.email,
             name: userData.name || ''
@@ -665,6 +687,9 @@ const App: React.FC = () => {
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Subthreshold workout editing with zone, pace, and optional FTP targets</div>
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Intervals.icu structured sync (FIT) designed for Garmin calendar and device workflows</div>
               </div>
+              <div className="mt-4 text-sm text-slate-600 dark:text-slate-300">
+                Starts with an intermediate default template so you immediately see a working week before manual setup.
+              </div>
               <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
                 Coming soon: swimming sessions and brick workouts for triathlon planning.
               </div>
@@ -828,6 +853,46 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            <section className="mb-6 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 px-4 py-4">
+              <div className="flex flex-col md:flex-row md:items-end gap-4 md:gap-6">
+                <div className="flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Core Input</p>
+                  <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-2 mb-1">5K Benchmark (M:S)</label>
+                  <input
+                    type="text"
+                    value={profile.raceTime}
+                    onChange={(e) => setProfile((p) => ({ ...p, raceTime: e.target.value }))}
+                    className="w-full max-w-[180px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-semibold text-slate-900 dark:text-slate-100"
+                  />
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                    Your threshold pace is <span className="font-bold">{secondsToTime(calculateThresholdPace(profile.raceDistance, profile.raceTime, profile))}/km</span>
+                  </p>
+                </div>
+                <div className="flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Core Input</p>
+                  <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-2 mb-1">Weekly Target (km)</label>
+                  <input
+                    type="range"
+                    min={20}
+                    max={180}
+                    step={1}
+                    value={profile.weeklyVolume}
+                    onChange={(e) => setProfile((p) => ({ ...p, weeklyVolume: Number(e.target.value) || 0 }))}
+                    className="w-full accent-norway-blue"
+                  />
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                    {Math.round(profile.weeklyVolume)} km target · ~{estimatedMinutesFromTarget} min
+                  </p>
+                </div>
+                <button
+                  onClick={handleGeneratePlan}
+                  className="h-10 px-4 rounded-xl bg-norway-red text-white text-sm font-semibold hover:bg-red-700 transition-colors"
+                >
+                  Rebuild Plan
+                </button>
+              </div>
+            </section>
+
             {!!syncMessage && (
               <div className={`mb-6 px-4 py-3 rounded-xl border text-sm ${syncStatus === 'error' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/30 dark:border-red-900 dark:text-red-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-300'}`}>
                 {syncMessage}
@@ -931,6 +996,9 @@ const App: React.FC = () => {
                             <div>
                                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2 ml-1">5K Time (M:S)</label>
                                 <input type="text" value={profile.raceTime} onChange={(e) => setProfile(p => ({...p, raceTime: e.target.value}))} className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-bold text-slate-900 dark:text-slate-100" />
+                                <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                                  Your threshold pace is <span className="font-bold">{secondsToTime(calculateThresholdPace(profile.raceDistance, profile.raceTime, profile))}/km</span>
+                                </p>
                             </div>
                         </div>
 

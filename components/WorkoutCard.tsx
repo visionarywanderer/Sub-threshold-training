@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, GripVertical, RefreshCw, Cloud, CloudRain, CloudSun, Snowflake, Sun } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical, RefreshCw, Cloud, CloudRain, CloudSun, Snowflake, Sun, Route, Trees, Bike, Monitor } from 'lucide-react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
 import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, DEFAULT_TREADMILL_INCLINE, formatThresholdSessionTitle, getEasyRunPaceRange, getIntervalPaceRange, getTreadmillPaceDeltaSeconds, MAX_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, secondsToTime } from '../utils/calculations';
 
@@ -302,6 +302,26 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     setCurrentSession(next);
     onUpdateSession(next);
   };
+  const setEnvironment = (nextEnv: 'road' | 'trail' | 'treadmill') => {
+    const updatedVariants = Array.isArray(currentSession.variants)
+      ? currentSession.variants.map((variant) => ({
+          ...variant,
+          environment: nextEnv,
+          treadmillInclinePct: nextEnv === 'treadmill'
+            ? (variant.treadmillInclinePct ?? currentSession.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE)
+            : variant.treadmillInclinePct,
+        }))
+      : currentSession.variants;
+    const next = recalcDerived({
+      ...currentSession,
+      environment: nextEnv,
+      treadmillInclinePct: nextEnv === 'treadmill'
+        ? (currentSession.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE)
+        : currentSession.treadmillInclinePct,
+      variants: updatedVariants,
+    });
+    pushUpdate(next);
+  };
 
   const updateInterval = (index: number, field: 'distance' | 'count' | 'rest', value: any) => {
     setCurrentSession((prev) => {
@@ -599,35 +619,34 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-slate-500 font-semibold uppercase">Surface</span>
-                    <select
-                      value={environment}
-                      onChange={(e) => {
-                        const nextEnv = e.target.value as 'road' | 'trail' | 'treadmill';
-                        const updatedVariants = Array.isArray(currentSession.variants)
-                          ? currentSession.variants.map((variant) => ({
-                              ...variant,
-                              environment: nextEnv,
-                              treadmillInclinePct: nextEnv === 'treadmill'
-                                ? (variant.treadmillInclinePct ?? currentSession.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE)
-                                : variant.treadmillInclinePct,
-                            }))
-                          : currentSession.variants;
-                        const next = recalcDerived({
-                          ...currentSession,
-                          environment: nextEnv,
-                          treadmillInclinePct: nextEnv === 'treadmill'
-                            ? (currentSession.treadmillInclinePct ?? DEFAULT_TREADMILL_INCLINE)
-                            : currentSession.treadmillInclinePct,
-                          variants: updatedVariants,
-                        });
-                        pushUpdate(next);
-                      }}
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100 w-40"
-                    >
-                      <option value="road">{isBike ? 'Road Bike' : 'Road'}</option>
-                      {!isBike ? <option value="trail">Trail</option> : null}
-                      <option value="treadmill">{isBike ? 'Stationary Bike' : 'Treadmill'}</option>
-                    </select>
+                    <div className="inline-flex gap-1 rounded-xl border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-900">
+                      <button
+                        type="button"
+                        onClick={() => setEnvironment('road')}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold ${environment === 'road' ? 'bg-norway-blue text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                      >
+                        {isBike ? <Bike size={13} /> : <Route size={13} />}
+                        {isBike ? 'Road Bike' : 'Road'}
+                      </button>
+                      {!isBike ? (
+                        <button
+                          type="button"
+                          onClick={() => setEnvironment('trail')}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold ${environment === 'trail' ? 'bg-norway-blue text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                        >
+                          <Trees size={13} />
+                          Trail
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setEnvironment('treadmill')}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold ${environment === 'treadmill' ? 'bg-norway-blue text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                      >
+                        <Monitor size={13} />
+                        {isBike ? 'Stationary' : 'Treadmill'}
+                      </button>
+                    </div>
                   </div>
 
                   {isTreadmillMode ? (
@@ -657,7 +676,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                     </div>
                   ) : (
                     <div className="text-xs text-slate-500 dark:text-slate-300">
-                      {isTrailMode ? 'Trail mode · HR Zone 2 target' : isBike ? 'Bike mode · zone/power targets' : 'Road mode · weather-adjusted pace'}
+                      {isTrailMode ? `Trail mode · HR ${getHrTargetLabel()} target` : isBike ? 'Bike mode · zone/power targets' : 'Road mode · weather-adjusted pace'}
                     </div>
                   )}
                 </div>
