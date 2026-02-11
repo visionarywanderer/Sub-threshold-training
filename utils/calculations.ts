@@ -64,7 +64,9 @@ export const applyPaceCorrection = (paceSec: number, deltaSec: number): number =
 };
 
 export const getTreadmillPaceDeltaSeconds = (inclinePct: number, basePaceSec = 300): number => {
-  const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(inclinePct) || DEFAULT_TREADMILL_INCLINE));
+  const parsed = Number(inclinePct);
+  const rawIncline = Number.isFinite(parsed) ? parsed : DEFAULT_TREADMILL_INCLINE;
+  const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, rawIncline));
   if (!Number.isFinite(basePaceSec) || basePaceSec <= 0) return 0;
   const g = incline / 100;
 

@@ -42,6 +42,11 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [cardOpen, setCardOpen] = useState(true);
+  const normalizeIncline = (value: unknown): number => {
+    const parsed = Number(value);
+    const raw = Number.isFinite(parsed) ? parsed : DEFAULT_TREADMILL_INCLINE;
+    return Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, raw));
+  };
 
   useEffect(() => {
     setCurrentSession(initialSession);
@@ -72,7 +77,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
   const environment = currentSession.environment || 'road';
   const isTrailMode = environment === 'trail';
   const isTreadmillMode = environment === 'treadmill';
-  const treadmillIncline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(currentSession.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE));
+  const treadmillIncline = normalizeIncline(currentSession.treadmillInclinePct);
   const isHeartRateMode = isTrailMode || !!currentSession.useHeartRateTarget;
   const displayDayTypeLabel = dayTypeLabel.replace('Threshold', 'Subthreshold');
   const effectivePaceCorrectionSec = useMemo(() => {
@@ -176,7 +181,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       ...session,
       environment: env,
       treadmillInclinePct: env === 'treadmill'
-        ? Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))
+        ? normalizeIncline(session.treadmillInclinePct)
         : session.treadmillInclinePct,
       useHeartRateTarget,
       targetHrLow: useHeartRateTarget && maxHr > 0 ? Math.round(maxHr * 0.70) : undefined,
@@ -632,7 +637,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                         <select
                           value={treadmillIncline}
                           onChange={(e) => {
-                            const incline = Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(e.target.value) || DEFAULT_TREADMILL_INCLINE));
+                            const incline = normalizeIncline(e.target.value);
                             const updatedVariants = Array.isArray(currentSession.variants)
                               ? currentSession.variants.map((variant) => ({ ...variant, treadmillInclinePct: incline }))
                               : currentSession.variants;

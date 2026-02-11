@@ -57,6 +57,11 @@ const parseRestToSec = (rest: string): number => {
   if (v.endsWith('m')) return (Number(v.replace('m', '')) || 0) * 60;
   return 0;
 };
+const normalizeIncline = (value: unknown): number => {
+  const parsed = Number(value);
+  const raw = Number.isFinite(parsed) ? parsed : DEFAULT_TREADMILL_INCLINE;
+  return Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, raw));
+};
 const shiftPaceText = (pace: string, deltaSec: number): string => {
   const value = (pace || '').trim();
   if (!value) return value;
@@ -420,7 +425,7 @@ const App: React.FC = () => {
         duration: Math.round(session.distance * (easyCenter / 60)),
         description: useHeartRateTarget
           ? `Target HR: ${hrRange.label}.`
-          : `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km${env === 'treadmill' ? ` · ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline` : ''}`,
+          : `Target Pace: ${secondsToTime(easyRange.low)}-${secondsToTime(easyRange.high)}/km${env === 'treadmill' ? ` · ${normalizeIncline(session.treadmillInclinePct)}% incline` : ''}`,
       };
     }
 
@@ -466,7 +471,7 @@ const App: React.FC = () => {
         duration: sessionDuration,
         description: useHeartRateTarget
           ? `Subthreshold session in trail mode. Target HR: ${hrRange.label}.`
-          : `${session.description}${env === 'treadmill' ? ` Treadmill ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline.` : ''}`,
+          : `${session.description}${env === 'treadmill' ? ` Treadmill ${normalizeIncline(session.treadmillInclinePct)}% incline.` : ''}`,
         warmup: useHeartRateTarget ? `${wuKm}km Z2 HR` : `${wuKm}km easy pace`,
         cooldown: useHeartRateTarget ? `${cdKm}km Z2 HR` : `${cdKm}km easy pace`,
       };
@@ -502,7 +507,7 @@ const App: React.FC = () => {
         duration: estimatedDuration,
         description: useHeartRateTarget
           ? `Long run in trail mode. Target HR: ${hrRange.label}.`
-          : `${session.description}${env === 'treadmill' ? ` Treadmill ${Math.min(MAX_TREADMILL_INCLINE, Math.max(MIN_TREADMILL_INCLINE, Number(session.treadmillInclinePct) || DEFAULT_TREADMILL_INCLINE))}% incline.` : ''}`,
+          : `${session.description}${env === 'treadmill' ? ` Treadmill ${normalizeIncline(session.treadmillInclinePct)}% incline.` : ''}`,
       };
     }
 
