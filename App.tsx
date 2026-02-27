@@ -1003,7 +1003,7 @@ const App: React.FC = () => {
 
             {activeTab === 'insights' && (
               <div className="animate-in fade-in slide-in-from-bottom-2">
-                <InsightsPortal intervalsConfig={intervalsConfig} active={activeTab === 'insights'} />
+                <InsightsPortal intervalsConfig={intervalsConfig} active={activeTab === 'insights'} targetSubthresholdPct={subThresholdPct} />
               </div>
             )}
 

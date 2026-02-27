@@ -7,6 +7,7 @@ import { secondsToTime } from '../utils/calculations';
 interface InsightsPortalProps {
   intervalsConfig: IntervalsIcuConfig;
   active: boolean;
+  targetSubthresholdPct?: number;
 }
 
 type ChartSeries = {
@@ -132,7 +133,7 @@ const MiniLineChart: React.FC<{
   );
 };
 
-const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active }) => {
+const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active, targetSubthresholdPct }) => {
   const [dataset, setDataset] = useState<InsightsDataset | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -172,13 +173,25 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
     if (!dataset) return [] as ThresholdProgressPoint[];
     return filterByRange(dataset.thresholdProgress, thresholdRange);
   }, [dataset, thresholdRange]);
+  const methodTargetPct = useMemo(() => {
+    const raw = Number(targetSubthresholdPct);
+    if (!Number.isFinite(raw) || raw <= 0) return 40;
+    return clamp(raw, 10, 80);
+  }, [targetSubthresholdPct]);
+  const scoredThresholdRows = useMemo(() => {
+    return thresholdRows.map((row) => {
+      const deviation = Math.abs(row.subthresholdSharePct - methodTargetPct);
+      const score = clamp(100 - (deviation * 3), 0, 100);
+      return { ...row, norwegianMethodScore: Number(score.toFixed(1)) };
+    });
+  }, [methodTargetPct, thresholdRows]);
 
   const latestEconomy = economyRows.length ? economyRows[economyRows.length - 1] : null;
   const latestRecovery = recoveryRows.length ? recoveryRows[recoveryRows.length - 1] : null;
-  const latestThreshold = thresholdRows.length ? thresholdRows[thresholdRows.length - 1] : null;
+  const latestThreshold = scoredThresholdRows.length ? scoredThresholdRows[scoredThresholdRows.length - 1] : null;
   const smoothedEconomy = useMemo(() => smoothSeries(economyRows.map((r) => r.economyScore), 7), [economyRows]);
-  const smoothedThresholdSpeed = useMemo(() => smoothSeries(thresholdRows.map((r) => r.thresholdSpeedKmh), 4), [thresholdRows]);
-  const smoothedMethodScore = useMemo(() => smoothSeries(thresholdRows.map((r) => r.norwegianMethodScore), 4), [thresholdRows]);
+  const smoothedThresholdSpeed = useMemo(() => smoothSeries(scoredThresholdRows.map((r) => r.thresholdSpeedKmh), 4), [scoredThresholdRows]);
+  const smoothedMethodScore = useMemo(() => smoothSeries(scoredThresholdRows.map((r) => r.norwegianMethodScore), 4), [scoredThresholdRows]);
   const smoothedRecovery = useMemo(() => smoothSeries(recoveryRows.map((r) => r.recoveryScore), 5), [recoveryRows]);
   const smoothedLoadRatio = useMemo(() => smoothSeries(recoveryRows.map((r) => (r.loadRatio || 1) * 45), 5), [recoveryRows]);
   const metricCards = useMemo(() => {
@@ -330,7 +343,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         </div>
       </section>}
 
-      {thresholdRows.length > 0 && <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
+      {scoredThresholdRows.length > 0 && <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h4 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Subthreshold Performance Over Time</h4>
@@ -351,7 +364,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         </div>
 
         <MiniLineChart
-          labels={thresholdRows.map((r) => r.date)}
+          labels={scoredThresholdRows.map((r) => r.date)}
           yLabel="Subthreshold speed and method score"
           series={[
             { key: 'speed', label: 'SubT speed km/h (smoothed)', color: '#2563eb', values: smoothedThresholdSpeed },
@@ -360,7 +373,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         />
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-            <span className="font-semibold text-slate-800 dark:text-slate-100">Speed trend:</span> {trendText(thresholdRows.map((r) => r.thresholdSpeedKmh), 2)} km/h
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Speed trend:</span> {trendText(scoredThresholdRows.map((r) => r.thresholdSpeedKmh), 2)} km/h
           </div>
           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
             <span className="font-semibold text-slate-800 dark:text-slate-100">Latest pace:</span> {latestThreshold ? `${secondsToTime(latestThreshold.thresholdPaceSecPerKm)}/km` : '--'}
@@ -369,7 +382,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
             <span className="font-semibold text-slate-800 dark:text-slate-100">SubT share:</span> {latestThreshold ? `${latestThreshold.subthresholdSharePct.toFixed(1)}%` : '--'}
           </div>
           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-            <span className="font-semibold text-slate-800 dark:text-slate-100">Method score:</span> {latestThreshold ? `${Math.round(latestThreshold.norwegianMethodScore)}/100` : '--'}
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Method score:</span> {latestThreshold ? `${Math.round(latestThreshold.norwegianMethodScore)}/100` : '--'} (target {methodTargetPct.toFixed(1)}%)
           </div>
         </div>
       </section>}
