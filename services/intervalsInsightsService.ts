@@ -144,6 +144,16 @@ const avg = (values: number[]): number => {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
+const percentile = (values: number[], p: number): number => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = clamp((p / 100) * (sorted.length - 1), 0, sorted.length - 1);
+  const low = Math.floor(rank);
+  const high = Math.ceil(rank);
+  if (low === high) return sorted[low];
+  const weight = rank - low;
+  return sorted[low] * (1 - weight) + sorted[high] * weight;
+};
 
 const rollingAverage = (rows: Array<{ value: number }>, index: number, window: number): number => {
   const start = Math.max(0, index - window + 1);
@@ -215,6 +225,13 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
   ]);
 
   const runs = activities.filter(isRunActivity);
+  const runSamples: Array<{
+    date: string;
+    speedMps: number;
+    avgHr: number;
+    movingMinutes: number;
+    taggedSubthreshold: boolean;
+  }> = [];
 
   const economyByDate = new Map<string, {
     economyScores: number[];
@@ -227,9 +244,6 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
   }>();
 
   const loadByDate = new Map<string, number>();
-  const totalRunMinutesByWeek = new Map<string, number>();
-  const subthresholdMinutesByWeek = new Map<string, number>();
-  const subthresholdSpeedSamplesByWeek = new Map<string, number[]>();
 
   for (const activity of runs) {
     const date = toIsoDate(activity.start_date_local || activity.start_date || activity.id);
@@ -258,19 +272,6 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
 
     const bucket = economyByDate.get(date)!;
     const paceSecPerKm = speedMps > 0 ? 1000 / speedMps : 0;
-    const week = getWeekStartIso(date);
-    const movingMinutes = movingSec > 0 ? movingSec / 60 : 0;
-    if (movingMinutes > 0) {
-      totalRunMinutesByWeek.set(week, (totalRunMinutesByWeek.get(week) || 0) + movingMinutes);
-    }
-    if (isSubthresholdActivity(activity) && movingMinutes > 0) {
-      subthresholdMinutesByWeek.set(week, (subthresholdMinutesByWeek.get(week) || 0) + movingMinutes);
-      if (speedMps > 0 && paceSecPerKm > 180 && paceSecPerKm < 420) {
-        const speeds = subthresholdSpeedSamplesByWeek.get(week) || [];
-        speeds.push(speedMps);
-        subthresholdSpeedSamplesByWeek.set(week, speeds);
-      }
-    }
 
     // Running Economy proxy:
     // economyScore = meters per heartbeat while running at endurance/tempo paces.
@@ -285,6 +286,15 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
       if (verticalOscillationCm && verticalOscillationCm > 0) bucket.verticalOsc.push(verticalOscillationCm);
       if (groundContactMs && groundContactMs > 0) bucket.contactTimes.push(groundContactMs);
     }
+    if (speedMps > 0 && avgHr > 0 && movingSec > 0) {
+      runSamples.push({
+        date,
+        speedMps,
+        avgHr,
+        movingMinutes: movingSec / 60,
+        taggedSubthreshold: isSubthresholdActivity(activity),
+      });
+    }
 
     const trainingLoad = asNumber(activity.icu_training_load)
       ?? asNumber(activity.training_load)
@@ -295,12 +305,49 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
     loadByDate.set(date, (loadByDate.get(date) || 0) + Math.max(0, trainingLoad || 0));
   }
 
-  const economy: RunningEconomyPoint[] = Array.from(economyByDate.entries())
+  const hrValues = runSamples.map((s) => s.avgHr).filter((v) => v > 0);
+  const speedValues = runSamples.map((s) => s.speedMps).filter((v) => v > 0);
+  const hrP50 = percentile(hrValues, 50);
+  const hrP70 = percentile(hrValues, 70);
+  const hrP90 = percentile(hrValues, 90);
+  const speedP55 = percentile(speedValues, 55);
+  const normalizationHr = hrP70 > 0 ? hrP70 : (hrP50 > 0 ? hrP50 : 150);
+  const weeklyThresholdByWeek = new Map<string, { speeds: number[]; subMin: number; totalMin: number }>();
+
+  for (const sample of runSamples) {
+    const week = getWeekStartIso(sample.date);
+    const existing = weeklyThresholdByWeek.get(week) || { speeds: [], subMin: 0, totalMin: 0 };
+    existing.totalMin += sample.movingMinutes;
+
+    const likelySubthreshold = sample.taggedSubthreshold || (
+      sample.avgHr >= hrP70 &&
+      sample.avgHr <= hrP90 &&
+      sample.speedMps >= speedP55 &&
+      sample.movingMinutes >= 30
+    );
+
+    if (likelySubthreshold) {
+      existing.subMin += sample.movingMinutes;
+      const hrNormalizedSpeed = sample.speedMps * (normalizationHr / Math.max(1, sample.avgHr));
+      existing.speeds.push(hrNormalizedSpeed);
+    }
+    weeklyThresholdByWeek.set(week, existing);
+  }
+
+  const economyRaw: RunningEconomyPoint[] = Array.from(economyByDate.entries())
     .map(([date, bucket]) => {
       if (!bucket.economyScores.length) return null;
+      const hrNormEconomies = bucket.paces
+        .map((paceSec, idx) => {
+          const hr = bucket.hrs[idx] || 0;
+          const speed = paceSec > 0 ? (1000 / paceSec) : 0;
+          if (speed <= 0 || hr <= 0) return 0;
+          return (speed * (normalizationHr / hr)) * 100;
+        })
+        .filter((v) => v > 0);
       return {
         date,
-        economyScore: Number(avg(bucket.economyScores).toFixed(2)),
+        economyScore: Number(avg(hrNormEconomies.length ? hrNormEconomies : bucket.economyScores).toFixed(2)),
         paceSecPerKm: Number(avg(bucket.paces).toFixed(2)),
         avgHr: Number(avg(bucket.hrs).toFixed(1)),
         cadence: bucket.cadences.length ? Number(avg(bucket.cadences).toFixed(1)) : undefined,
@@ -312,6 +359,11 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
     })
     .filter((row): row is RunningEconomyPoint => !!row)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const economyBaseline = median(economyRaw.slice(0, Math.min(28, economyRaw.length)).map((r) => r.economyScore));
+  const economy: RunningEconomyPoint[] = economyRaw.map((row) => ({
+    ...row,
+    economyScore: economyBaseline > 0 ? Number(((row.economyScore / economyBaseline) * 100).toFixed(1)) : row.economyScore,
+  }));
 
   const wellnessByDate = new Map<string, { hrv?: number; restingHr?: number }>();
   for (const row of wellness) {
@@ -376,17 +428,14 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
     };
   });
 
-  const thresholdWeeks = Array.from(new Set([
-    ...Array.from(totalRunMinutesByWeek.keys()),
-    ...Array.from(subthresholdMinutesByWeek.keys()),
-    ...Array.from(subthresholdSpeedSamplesByWeek.keys()),
-  ])).sort((a, b) => a.localeCompare(b));
+  const thresholdWeeks = Array.from(weeklyThresholdByWeek.keys()).sort((a, b) => a.localeCompare(b));
 
   const thresholdProgress: ThresholdProgressPoint[] = thresholdWeeks
     .map((week) => {
-      const totalRunMinutes = totalRunMinutesByWeek.get(week) || 0;
-      const subthresholdMinutes = subthresholdMinutesByWeek.get(week) || 0;
-      const speeds = subthresholdSpeedSamplesByWeek.get(week) || [];
+      const weekly = weeklyThresholdByWeek.get(week);
+      const totalRunMinutes = weekly?.totalMin || 0;
+      const subthresholdMinutes = weekly?.subMin || 0;
+      const speeds = weekly?.speeds || [];
       if (totalRunMinutes <= 0 || subthresholdMinutes <= 0 || !speeds.length) return null;
 
       const avgSpeedMps = avg(speeds);
