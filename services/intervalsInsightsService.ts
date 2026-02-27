@@ -24,9 +24,20 @@ export interface RecoveryPoint {
   loadRatio?: number;
 }
 
+export interface ThresholdProgressPoint {
+  date: string;
+  thresholdSpeedKmh: number;
+  thresholdPaceSecPerKm: number;
+  norwegianMethodScore: number;
+  subthresholdSharePct: number;
+  subthresholdMinutes: number;
+  totalRunMinutes: number;
+}
+
 export interface InsightsDataset {
   economy: RunningEconomyPoint[];
   recovery: RecoveryPoint[];
+  thresholdProgress: ThresholdProgressPoint[];
   fetchedAt: string;
 }
 
@@ -43,6 +54,17 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const asNumber = (value: unknown): number | undefined => {
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+};
+const getWeekStartIso = (dateIso: string): string => {
+  const d = new Date(`${dateIso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateIso;
+  const day = d.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + mondayOffset);
+  const year = d.getFullYear();
+  const month = `${d.getMonth() + 1}`.padStart(2, '0');
+  const dayOfMonth = `${d.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
 };
 
 const getAuthHeaders = (apiKey: string): Record<string, string> => ({
@@ -74,6 +96,17 @@ const isRunActivity = (activity: RawActivity): boolean => {
   const sport = String(activity.sport || activity.type || activity.activity_type || '').toLowerCase();
   const subtype = String(activity.sub_type || activity.subtype || '').toLowerCase();
   return sport.includes('run') || subtype.includes('run') || sport === 'trail' || sport === 'treadmill';
+};
+const isSubthresholdActivity = (activity: RawActivity): boolean => {
+  const haystack = [
+    activity.name,
+    activity.title,
+    activity.description,
+    activity.workout_name,
+    activity.notes,
+    activity.subtype,
+  ].map((v) => String(v || '').toLowerCase()).join(' ');
+  return /(subt|sub[-\s]?threshold|threshold|norwegian)/i.test(haystack);
 };
 
 const extractDistanceMeters = (activity: RawActivity): number => {
@@ -194,6 +227,9 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
   }>();
 
   const loadByDate = new Map<string, number>();
+  const totalRunMinutesByWeek = new Map<string, number>();
+  const subthresholdMinutesByWeek = new Map<string, number>();
+  const subthresholdSpeedSamplesByWeek = new Map<string, number[]>();
 
   for (const activity of runs) {
     const date = toIsoDate(activity.start_date_local || activity.start_date || activity.id);
@@ -222,6 +258,19 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
 
     const bucket = economyByDate.get(date)!;
     const paceSecPerKm = speedMps > 0 ? 1000 / speedMps : 0;
+    const week = getWeekStartIso(date);
+    const movingMinutes = movingSec > 0 ? movingSec / 60 : 0;
+    if (movingMinutes > 0) {
+      totalRunMinutesByWeek.set(week, (totalRunMinutesByWeek.get(week) || 0) + movingMinutes);
+    }
+    if (isSubthresholdActivity(activity) && movingMinutes > 0) {
+      subthresholdMinutesByWeek.set(week, (subthresholdMinutesByWeek.get(week) || 0) + movingMinutes);
+      if (speedMps > 0 && paceSecPerKm > 180 && paceSecPerKm < 420) {
+        const speeds = subthresholdSpeedSamplesByWeek.get(week) || [];
+        speeds.push(speedMps);
+        subthresholdSpeedSamplesByWeek.set(week, speeds);
+      }
+    }
 
     // Running Economy proxy:
     // economyScore = meters per heartbeat while running at endurance/tempo paces.
@@ -327,9 +376,42 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
     };
   });
 
+  const thresholdWeeks = Array.from(new Set([
+    ...Array.from(totalRunMinutesByWeek.keys()),
+    ...Array.from(subthresholdMinutesByWeek.keys()),
+    ...Array.from(subthresholdSpeedSamplesByWeek.keys()),
+  ])).sort((a, b) => a.localeCompare(b));
+
+  const thresholdProgress: ThresholdProgressPoint[] = thresholdWeeks
+    .map((week) => {
+      const totalRunMinutes = totalRunMinutesByWeek.get(week) || 0;
+      const subthresholdMinutes = subthresholdMinutesByWeek.get(week) || 0;
+      const speeds = subthresholdSpeedSamplesByWeek.get(week) || [];
+      if (totalRunMinutes <= 0 || subthresholdMinutes <= 0 || !speeds.length) return null;
+
+      const avgSpeedMps = avg(speeds);
+      const thresholdSpeedKmh = avgSpeedMps * 3.6;
+      const thresholdPaceSecPerKm = avgSpeedMps > 0 ? (1000 / avgSpeedMps) : 0;
+      const subthresholdSharePct = (subthresholdMinutes / totalRunMinutes) * 100;
+      // Score centered on the Norwegian-method subthreshold distribution band.
+      const norwegianMethodScore = clamp(100 - (Math.abs(subthresholdSharePct - 40) * 3), 0, 100);
+
+      return {
+        date: week,
+        thresholdSpeedKmh: Number(thresholdSpeedKmh.toFixed(2)),
+        thresholdPaceSecPerKm: Number(thresholdPaceSecPerKm.toFixed(1)),
+        norwegianMethodScore: Number(norwegianMethodScore.toFixed(1)),
+        subthresholdSharePct: Number(subthresholdSharePct.toFixed(1)),
+        subthresholdMinutes: Number(subthresholdMinutes.toFixed(1)),
+        totalRunMinutes: Number(totalRunMinutes.toFixed(1)),
+      };
+    })
+    .filter((row): row is ThresholdProgressPoint => !!row);
+
   return {
     economy,
     recovery,
+    thresholdProgress,
     fetchedAt: new Date().toISOString(),
   };
 };

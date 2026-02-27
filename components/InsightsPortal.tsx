@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Activity, HeartPulse, GaugeCircle, Timer } from 'lucide-react';
+import { RefreshCw, Activity, HeartPulse, GaugeCircle, Timer, Zap } from 'lucide-react';
 import { IntervalsIcuConfig } from '../types';
-import { InsightsDataset, InsightsRangeKey, RunningEconomyPoint, RecoveryPoint, filterByRange, loadInsightsDataset } from '../services/intervalsInsightsService';
+import { InsightsDataset, InsightsRangeKey, RunningEconomyPoint, RecoveryPoint, ThresholdProgressPoint, filterByRange, loadInsightsDataset } from '../services/intervalsInsightsService';
 import { secondsToTime } from '../utils/calculations';
 
 interface InsightsPortalProps {
@@ -30,6 +30,14 @@ const RECOVERY_RANGE_OPTIONS: Array<{ key: InsightsRangeKey; label: string }> = 
 ];
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const smoothSeries = (values: number[], window = 5): number[] => {
+  if (values.length <= 2 || window <= 1) return values;
+  return values.map((_, index) => {
+    const start = Math.max(0, index - window + 1);
+    const slice = values.slice(start, index + 1);
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+  });
+};
 
 const trendText = (values: number[], precision = 1): string => {
   if (values.length < 2) return 'Not enough history';
@@ -129,6 +137,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [economyRange, setEconomyRange] = useState<InsightsRangeKey>('3m');
+  const [thresholdRange, setThresholdRange] = useState<InsightsRangeKey>('3m');
   const [recoveryRange, setRecoveryRange] = useState<InsightsRangeKey>('1m');
 
   const loadData = async () => {
@@ -159,9 +168,68 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
     if (!dataset) return [] as RecoveryPoint[];
     return filterByRange(dataset.recovery, recoveryRange);
   }, [dataset, recoveryRange]);
+  const thresholdRows = useMemo(() => {
+    if (!dataset) return [] as ThresholdProgressPoint[];
+    return filterByRange(dataset.thresholdProgress, thresholdRange);
+  }, [dataset, thresholdRange]);
 
   const latestEconomy = economyRows.length ? economyRows[economyRows.length - 1] : null;
   const latestRecovery = recoveryRows.length ? recoveryRows[recoveryRows.length - 1] : null;
+  const latestThreshold = thresholdRows.length ? thresholdRows[thresholdRows.length - 1] : null;
+  const smoothedEconomy = useMemo(() => smoothSeries(economyRows.map((r) => r.economyScore), 7), [economyRows]);
+  const smoothedThresholdSpeed = useMemo(() => smoothSeries(thresholdRows.map((r) => r.thresholdSpeedKmh), 4), [thresholdRows]);
+  const smoothedMethodScore = useMemo(() => smoothSeries(thresholdRows.map((r) => r.norwegianMethodScore), 4), [thresholdRows]);
+  const smoothedRecovery = useMemo(() => smoothSeries(recoveryRows.map((r) => r.recoveryScore), 5), [recoveryRows]);
+  const smoothedLoadRatio = useMemo(() => smoothSeries(recoveryRows.map((r) => (r.loadRatio || 1) * 45), 5), [recoveryRows]);
+  const metricCards = useMemo(() => {
+    const cards: Array<{ key: string; title: string; value: string; subtitle: string; tone?: string; icon: React.ReactNode }> = [];
+    if (latestEconomy) {
+      cards.push({
+        key: 'economy',
+        title: 'Economy',
+        value: latestEconomy.economyScore.toFixed(2),
+        subtitle: 'meters/heartbeat proxy',
+        tone: metricTone(latestEconomy.economyScore || 0, 2.1, 1.7),
+        icon: <GaugeCircle size={13} />,
+      });
+      cards.push({
+        key: 'pace',
+        title: 'Pace @ Economy',
+        value: secondsToTime(latestEconomy.paceSecPerKm),
+        subtitle: 'min/km average on selected runs',
+        icon: <Timer size={13} />,
+      });
+    }
+    if (latestRecovery) {
+      cards.push({
+        key: 'recovery',
+        title: 'Recovery Score',
+        value: `${Math.round(latestRecovery.recoveryScore)}`,
+        subtitle: 'HRV + Resting HR + load balance',
+        tone: metricTone(latestRecovery.recoveryScore || 0, 75, 60),
+        icon: <HeartPulse size={13} />,
+      });
+    }
+    if (latestRecovery?.loadRatio) {
+      cards.push({
+        key: 'load',
+        title: 'Load Ratio',
+        value: latestRecovery.loadRatio.toFixed(2),
+        subtitle: '7-day / 28-day',
+        icon: <Activity size={13} />,
+      });
+    }
+    if (latestThreshold) {
+      cards.push({
+        key: 'threshold-speed',
+        title: 'SubT Speed',
+        value: `${latestThreshold.thresholdSpeedKmh.toFixed(1)} km/h`,
+        subtitle: 'weekly subthreshold pace performance',
+        icon: <Zap size={13} />,
+      });
+    }
+    return cards;
+  }, [latestEconomy, latestRecovery, latestThreshold]);
 
   if (!intervalsConfig.connected) {
     return (
@@ -178,7 +246,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
           <div>
             <h3 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Performance Hub</h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Simplified Coros-style view of recovery and running economy based on Intervals.icu data.
+              Simplified view of recovery and running economy based on Intervals.icu data.
             </p>
           </div>
           <button
@@ -205,33 +273,19 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         ) : null}
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <article className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400"><GaugeCircle size={13} /> Economy</div>
-          <p className={`mt-2 text-3xl font-bold ${metricTone(latestEconomy?.economyScore || 0, 2.1, 1.7)}`}>{latestEconomy ? latestEconomy.economyScore.toFixed(2) : '--'}</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">meters/heartbeat proxy</p>
-        </article>
+      {metricCards.length > 0 && (
+        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {metricCards.map((card) => (
+            <article key={card.key} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400">{card.icon} {card.title}</div>
+              <p className={`mt-2 text-3xl font-bold ${card.tone || 'text-slate-900 dark:text-slate-100'}`}>{card.value}</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{card.subtitle}</p>
+            </article>
+          ))}
+        </section>
+      )}
 
-        <article className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400"><Timer size={13} /> Pace @ Economy</div>
-          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{latestEconomy ? secondsToTime(latestEconomy.paceSecPerKm) : '--'}</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">min/km average on selected runs</p>
-        </article>
-
-        <article className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400"><HeartPulse size={13} /> Recovery Score</div>
-          <p className={`mt-2 text-3xl font-bold ${metricTone(latestRecovery?.recoveryScore || 0, 75, 60)}`}>{latestRecovery ? Math.round(latestRecovery.recoveryScore) : '--'}</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">HRV + Resting HR + load balance</p>
-        </article>
-
-        <article className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase text-slate-500 dark:text-slate-400"><Activity size={13} /> Load Ratio</div>
-          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{latestRecovery?.loadRatio ? latestRecovery.loadRatio.toFixed(2) : '--'}</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">7-day / 28-day</p>
-        </article>
-      </section>
-
-      <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
+      {economyRows.length > 0 && <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h4 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Running Economy Over Time</h4>
@@ -251,34 +305,76 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
           </div>
         </div>
 
-        {economyRows.length ? (
-          <>
-            <MiniLineChart
-              labels={economyRows.map((r) => r.date)}
-              yLabel="Running economy"
-              series={[
-                { key: 'economy', label: 'Economy score', color: '#0f3b86', values: economyRows.map((r) => r.economyScore) },
-                { key: 'hr', label: 'Avg HR', color: '#ef4444', values: economyRows.map((r) => r.avgHr / 60) },
-              ]}
-            />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Trend:</span> {trendText(economyRows.map((r) => r.economyScore), 2)}
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Cadence:</span> {latestEconomy?.cadence ? `${latestEconomy.cadence.toFixed(1)} spm` : 'Not available'}
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Dynamics:</span> {latestEconomy?.groundContactMs ? `${latestEconomy.groundContactMs.toFixed(0)} ms GCT` : 'No advanced dynamics in source data'}
-              </div>
+        <MiniLineChart
+          labels={economyRows.map((r) => r.date)}
+          yLabel="Running economy"
+          series={[
+            { key: 'economy', label: 'Economy score (smoothed)', color: '#0f3b86', values: smoothedEconomy },
+            { key: 'hr', label: 'Avg HR', color: '#ef4444', values: economyRows.map((r) => r.avgHr / 60) },
+          ]}
+        />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Trend:</span> {trendText(economyRows.map((r) => r.economyScore), 2)}
+          </div>
+          {latestEconomy?.cadence ? (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Cadence:</span> {latestEconomy.cadence.toFixed(1)} spm
             </div>
-          </>
-        ) : (
-          <p className="text-sm text-slate-500 dark:text-slate-400">No running economy data available in selected range.</p>
-        )}
-      </section>
+          ) : null}
+          {latestEconomy?.groundContactMs ? (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Dynamics:</span> {latestEconomy.groundContactMs.toFixed(0)} ms GCT
+            </div>
+          ) : null}
+        </div>
+      </section>}
 
-      <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
+      {thresholdRows.length > 0 && <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h4 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Subthreshold Performance Over Time</h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Tracks threshold speed and Norwegian-method distribution consistency.</p>
+          </div>
+          <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1">
+            {RANGE_OPTIONS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setThresholdRange(option.key)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold ${thresholdRange === option.key ? 'bg-norway-blue text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <MiniLineChart
+          labels={thresholdRows.map((r) => r.date)}
+          yLabel="Subthreshold speed and method score"
+          series={[
+            { key: 'speed', label: 'SubT speed km/h (smoothed)', color: '#2563eb', values: smoothedThresholdSpeed },
+            { key: 'method', label: 'Norwegian method score (smoothed)', color: '#7c3aed', values: smoothedMethodScore },
+          ]}
+        />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Speed trend:</span> {trendText(thresholdRows.map((r) => r.thresholdSpeedKmh), 2)} km/h
+          </div>
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Latest pace:</span> {latestThreshold ? `${secondsToTime(latestThreshold.thresholdPaceSecPerKm)}/km` : '--'}
+          </div>
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">SubT share:</span> {latestThreshold ? `${latestThreshold.subthresholdSharePct.toFixed(1)}%` : '--'}
+          </div>
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Method score:</span> {latestThreshold ? `${Math.round(latestThreshold.norwegianMethodScore)}/100` : '--'}
+          </div>
+        </div>
+      </section>}
+
+      {recoveryRows.length > 0 && <section className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/90 p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h4 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Recovery Over Time</h4>
@@ -298,35 +394,35 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
           </div>
         </div>
 
-        {recoveryRows.length ? (
-          <>
-            <MiniLineChart
-              labels={recoveryRows.map((r) => r.date)}
-              yLabel="Recovery score"
-              series={[
-                { key: 'recovery', label: 'Recovery score', color: '#16a34a', values: recoveryRows.map((r) => r.recoveryScore) },
-                { key: 'load', label: 'Load ratio x100', color: '#f59e0b', values: recoveryRows.map((r) => (r.loadRatio || 1) * 45) },
-              ]}
-            />
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Trend:</span> {trendText(recoveryRows.map((r) => r.recoveryScore), 1)}
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">HRV:</span> {latestRecovery?.hrv ? `${latestRecovery.hrv.toFixed(1)} ms` : 'Unavailable'}
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Resting HR:</span> {latestRecovery?.restingHr ? `${latestRecovery.restingHr.toFixed(0)} bpm` : 'Unavailable'}
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Acute/Chronic:</span> {latestRecovery?.loadRatio ? latestRecovery.loadRatio.toFixed(2) : '--'}
-              </div>
+        <MiniLineChart
+          labels={recoveryRows.map((r) => r.date)}
+          yLabel="Recovery score"
+          series={[
+            { key: 'recovery', label: 'Recovery score (smoothed)', color: '#16a34a', values: smoothedRecovery },
+            { key: 'load', label: 'Load ratio x100 (smoothed)', color: '#f59e0b', values: smoothedLoadRatio },
+          ]}
+        />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+            <span className="font-semibold text-slate-800 dark:text-slate-100">Trend:</span> {trendText(recoveryRows.map((r) => r.recoveryScore), 1)}
+          </div>
+          {latestRecovery?.hrv ? (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+              <span className="font-semibold text-slate-800 dark:text-slate-100">HRV:</span> {latestRecovery.hrv.toFixed(1)} ms
             </div>
-          </>
-        ) : (
-          <p className="text-sm text-slate-500 dark:text-slate-400">No recovery data available in selected range.</p>
-        )}
-      </section>
+          ) : null}
+          {latestRecovery?.restingHr ? (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Resting HR:</span> {latestRecovery.restingHr.toFixed(0)} bpm
+            </div>
+          ) : null}
+          {latestRecovery?.loadRatio ? (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-slate-600 dark:text-slate-300">
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Acute/Chronic:</span> {latestRecovery.loadRatio.toFixed(2)}
+            </div>
+          ) : null}
+        </div>
+      </section>}
     </div>
   );
 };

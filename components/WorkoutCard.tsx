@@ -373,6 +373,20 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
       return nextSession;
     });
   };
+  const updateIntervalMode = (index: number, mode: 'distance' | 'time') => {
+    setCurrentSession((prev) => {
+      const prevIntervals = prev.intervals || [];
+      const nextIntervals = [...prevIntervals];
+      const current = nextIntervals[index] || { distance: 1000, count: 10, rest: '60s', pace: '', description: '' };
+      const nextInterval = mode === 'time'
+        ? { ...current, durationSec: Number(current.durationSec) || 180 }
+        : { ...current, durationSec: undefined, distance: Number(current.distance) || 1000 };
+      nextIntervals[index] = nextInterval;
+      const nextSession = recalcDerived({ ...prev, intervals: nextIntervals });
+      onUpdateSession(nextSession);
+      return nextSession;
+    });
+  };
 
   const updateEasyDistance = (distance: number) => {
     const next = recalcDerived({ ...currentSession, distance: Math.max(0, distance) });
@@ -832,6 +846,24 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                   {currentSession.intervals!.map((int, i) => (
                     <div key={i} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
                       <div className="flex flex-col gap-1">
+                        {!isBike && (
+                          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 p-1 bg-white dark:bg-slate-900 mb-1">
+                            <button
+                              type="button"
+                              onClick={() => updateIntervalMode(i, 'distance')}
+                              className={`px-2 py-1 rounded-md text-[10px] font-semibold ${!(Number(int.durationSec) || 0) ? 'bg-norway-blue text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                            >
+                              Distance
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateIntervalMode(i, 'time')}
+                              className={`px-2 py-1 rounded-md text-[10px] font-semibold ${(Number(int.durationSec) || 0) > 0 ? 'bg-norway-blue text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                            >
+                              Time
+                            </button>
+                          </div>
+                        )}
                         <span className="text-[10px] text-slate-500 font-semibold uppercase">{(!isBike && (Number(int.durationSec) || 0) > 0) ? 'Duration' : 'Distance'}</span>
                         {isBike ? (
                           <select
@@ -864,7 +896,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                             onChange={(e) => updateInterval(i, 'distance', e.target.value)}
                             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
                           >
-                            {[400, 600, 800, 1000, 1200, 1600, 2000, 3000, 5000].map((d) => (
+                            {[200, 400, 600, 800, 1000, 1200, 1600, 2000, 3000].map((d) => (
                               <option key={d} value={d}>{d}m</option>
                             ))}
                           </select>
