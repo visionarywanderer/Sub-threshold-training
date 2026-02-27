@@ -9,6 +9,11 @@ export const formatThresholdSessionTitle = (reps: number, distanceMeters: number
   const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
   return `SubT ${safeReps}x${distLabel}`;
 };
+export const formatThresholdTimeTitle = (reps: number, durationSec: number): string => {
+  const safeReps = Math.max(1, Math.round(Number(reps) || 1));
+  const mins = Math.max(1, Math.round((Number(durationSec) || 0) / 60));
+  return `SubT ${safeReps}x${mins}:00`;
+};
 
 export const timeToSeconds = (time: string): number => {
   if (!time) return 0;
@@ -307,16 +312,19 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   const cd = profile.cooldownDist;
 
   const thresholdTemplates = [
-    { reps: 5, dist: 2000, rest: '60s' }, // 5x2km
-    { reps: 8, dist: 1000, rest: '60s' }, // 8x1km
-    { reps: 3, dist: 3000, rest: '90s' }, // 3x3km
+    { reps: 10, durationSec: 3 * 60, anchorDist: 1000, rest: '60s' }, // 10x3:00
+    { reps: 8, durationSec: 6 * 60, anchorDist: 2000, rest: '75s' }, // 8x6:00
+    { reps: 3, durationSec: 12 * 60, anchorDist: 3000, rest: '120s' }, // 3x12:00
   ];
   const thresholdDays = Object.entries(profile.schedule)
     .filter(([, t]) => t === DayType.THRESHOLD)
     .map(([day]) => day);
   const thresholdSessionDists = thresholdDays.map((_, idx) => {
     const tpl = thresholdTemplates[idx % thresholdTemplates.length];
-    return wu + cd + ((tpl.reps * tpl.dist) / 1000);
+    const pace = getIntervalPaceRange(profile, tpl.anchorDist, correctionSec).range.split('-')[0] || '4:30';
+    const paceSec = Math.max(1, timeToSeconds(pace));
+    const repDistKm = (tpl.durationSec / paceSec);
+    return wu + cd + (tpl.reps * repDistKm);
   });
   const maxThresholdDist = thresholdSessionDists.length ? Math.max(...thresholdSessionDists) : 0;
 
@@ -337,15 +345,18 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   const createThresholdSession = (id: string, dayName: string): WorkoutSession => {
     const templateIdx = Math.max(0, thresholdDays.indexOf(dayName));
     const tpl = thresholdTemplates[templateIdx % thresholdTemplates.length];
-    const dist = tpl.dist;
+    const dist = tpl.anchorDist;
     const reps = tpl.reps;
+    const durationSec = tpl.durationSec;
 
     const paceData = getIntervalPaceRange(profile, dist, correctionSec);
-    const sessionDist = wu + cd + (reps * dist / 1000);
+    const paceMidSec = timeToSeconds((paceData.range.split('-')[0] || '').trim());
+    const repDistKm = paceMidSec > 0 ? (durationSec / paceMidSec) : (dist / 1000);
+    const sessionDist = wu + cd + (reps * repDistKm);
 
     return {
       id: id,
-      title: formatThresholdSessionTitle(reps, dist),
+      title: formatThresholdTimeTitle(reps, durationSec),
       type: WorkoutType.THRESHOLD,
       sport: 'run',
       environment: 'road',
@@ -355,7 +366,7 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
       duration: Math.round(sessionDist * (tPace / 60) * 1.05),
       description: `Strictly controlled sub-threshold. Stay below lactate turnpoint.`,
       intervals: [{
-        distance: dist, count: reps, pace: paceData.range, rest: tpl.rest, description: paceData.effort
+        distance: Math.round(repDistKm * 1000), durationSec, count: reps, pace: paceData.range, rest: tpl.rest, description: paceData.effort
       }],
       warmup: `${wu}km easy pace`,
       cooldown: `${cd}km easy pace`
@@ -412,6 +423,20 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
         description: `High specificity. 3 blocks of 5km at Marathon Pace.`,
         intervals: [{ distance: 5000, count: 3, pace: secondsToTime(mpSec), rest: '1km float', description: 'Marathon Pace' }],
         warmup: `${wu}km Easy`, cooldown: `${cd}km Easy`
+      },
+      {
+        id: `${id}-timeblocks`,
+        title: `3x20min SubT Long Run`,
+        type: WorkoutType.LONG_RUN,
+        sport: 'run',
+        environment: 'road',
+        treadmillInclinePct: DEFAULT_TREADMILL_INCLINE,
+        useHeartRateTarget: false,
+        distance: Math.round((wu + cd + ((3 * 20 * 60) / Math.max(1, tPace))) * 10) / 10,
+        duration: Math.round((wu + cd) * (easyPace / 60) + 60 + 10),
+        description: `3 blocks of 20 minutes in controlled subthreshold.`,
+        intervals: [{ distance: Math.round(((20 * 60) / Math.max(1, tPace)) * 1000), durationSec: 20 * 60, count: 3, pace: getIntervalPaceRange(profile, 5000, correctionSec).range, rest: '5m', description: 'Subthreshold' }],
+        warmup: `${wu}km Easy`, cooldown: `${cd}km Easy`
       }
     ];
 
@@ -457,8 +482,8 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
     const templateIdx = Math.max(0, thresholdDays.indexOf(dayName));
     const tpl = thresholdTemplates[templateIdx % thresholdTemplates.length];
     const reps = tpl.reps;
-    const runPace = getIntervalPaceRange(profile, tpl.dist, correctionSec).range.split('-')[0];
-    const runRepSec = timeToSeconds(runPace) * (tpl.dist / 1000);
+    const runPace = getIntervalPaceRange(profile, tpl.anchorDist, correctionSec).range.split('-')[0];
+    const runRepSec = tpl.durationSec;
     const bikeRepKm = ((runRepSec / 3600) * bikeSpeedKmh(WorkoutType.THRESHOLD));
     const bikeRepMeters = Math.max(1000, Math.round(bikeRepKm * 1000));
     const rest = '120s';

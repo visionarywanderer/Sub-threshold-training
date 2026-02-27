@@ -19,6 +19,11 @@ const getDynamicTitle = (session: WorkoutSession): string => {
   if (session.type !== WorkoutType.THRESHOLD || !session.intervals?.length) return session.title;
   const first = session.intervals[0];
   const reps = Math.max(1, Number(first.count) || 1);
+  const durationSec = Number(first.durationSec) || 0;
+  if (durationSec > 0) {
+    const mins = Math.max(1, Math.round(durationSec / 60));
+    return `SubT ${reps}x${mins}:00`;
+  }
   const dist = Math.max(0, Number(first.distance) || 0);
   const distLabel = dist >= 1000 ? `${Math.round((dist / 1000) * 10) / 10}km` : `${Math.round(dist)}m`;
   return `SubT ${reps}x${distLabel}`;
@@ -335,13 +340,14 @@ const formatIcuWorkoutText = (session: WorkoutSession): string => {
   if (session.intervals && session.intervals.length > 0) {
     for (const int of session.intervals) {
       const reps = Math.max(1, Number(int.count) || 1);
+      const durationSec = Number(int.durationSec) || 0;
       const distStr = int.distance > 0 ? kmTokenFromMeters(int.distance) : '';
       const pace = normalizePaceRange(int.pace || '');
       const runStep = isBike
         ? `${distStr} ${int.targetPowerLow && int.targetPowerHigh ? `@ ${int.targetPowerLow}-${int.targetPowerHigh}w` : `@ ${int.targetZone || 'Z2'}`} ride`.trim()
         : session.useHeartRateTarget
-          ? `${distStr} @ ${hrToken} run`.trim()
-          : `${distStr}${pace ? ` @ ${pace}` : ''} run`.trim();
+          ? `${durationSec > 0 ? `${Math.round(durationSec / 60)}m` : distStr} @ ${hrToken} run`.trim()
+          : `${durationSec > 0 ? `${Math.round(durationSec / 60)}m` : distStr}${pace ? ` @ ${pace}` : ''} run`.trim();
       const recovery = normalizeRecoveryStep(int.rest || '');
 
       if (reps > 1) {

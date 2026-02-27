@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType, TrainingSport } from './types';
-import { calculateVDOTFromRace, formatThresholdSessionTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime, getTreadmillPaceDeltaSeconds, DEFAULT_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, MAX_TREADMILL_INCLINE } from './utils/calculations';
+import { calculateVDOTFromRace, formatThresholdSessionTitle, formatThresholdTimeTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime, getTreadmillPaceDeltaSeconds, DEFAULT_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, MAX_TREADMILL_INCLINE } from './utils/calculations';
 import { deleteWorkoutFromIcu, syncWorkoutToIcu, syncWorkoutsBulkToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import SortableDayItem from './components/SortableDayItem';
+import InsightsPortal from './components/InsightsPortal';
 import { Settings, X, PlayCircle, LogOut, Check, Globe, RefreshCw, CloudSun, Moon, Sun } from 'lucide-react';
 import { DndContext, DragEndEvent, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -144,7 +145,7 @@ const App: React.FC = () => {
   const googleButtonRenderedRef = useRef(false);
   const [profile, setProfile] = useState<UserProfile>(EMPTY_RUN_PROFILE);
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
-  const [activeTab, setActiveTab] = useState<'plan' | 'pacing' | 'settings'>('plan'); 
+  const [activeTab, setActiveTab] = useState<'plan' | 'pacing' | 'insights' | 'settings'>('plan'); 
   const [showIntervalsModal, setShowIntervalsModal] = useState(false);
   const [showScheduleWeekModal, setShowScheduleWeekModal] = useState(false);
   const [intervalsConfig, setIntervalsConfig] = useState<IntervalsIcuConfig>({ athleteId: '', apiKey: '', connected: false });
@@ -373,6 +374,10 @@ const App: React.FC = () => {
           const bikeSpeedKmh = session.type === WorkoutType.THRESHOLD ? 34 : 31;
           return acc + ((distKm * reps / bikeSpeedKmh) * 60);
         }
+        const durationSec = Number(int.durationSec) || 0;
+        if (durationSec > 0) {
+          return acc + ((durationSec * reps) / 60);
+        }
         const distanceM = Math.max(0, Number(int.distance) || 0);
         const paceMid = parsePaceRangeMidSec(int.pace || '');
         return acc + ((distanceM / 1000) * reps * (paceMid / 60));
@@ -454,8 +459,20 @@ const App: React.FC = () => {
     if (session.type === WorkoutType.THRESHOLD) {
       const newIntervals = (session.intervals || []).map((int) => {
         const dist = Number(int.distance) || 0;
-        const paceData = getIntervalPaceRange(profile, dist, effectiveDeltaSec);
-        return { ...int, distance: dist, pace: paceData.range, description: paceData.effort };
+        const durationSec = Number(int.durationSec) || 0;
+        const anchorDist = durationSec > 0 ? Math.max(400, Math.round((durationSec / 60) * 330)) : dist;
+        const paceData = getIntervalPaceRange(profile, anchorDist, effectiveDeltaSec);
+        const paceMidSec = parsePaceRangeMidSec(paceData.range);
+        const derivedDist = durationSec > 0 && paceMidSec > 0
+          ? Math.round((durationSec / paceMidSec) * 1000)
+          : dist;
+        return {
+          ...int,
+          durationSec: durationSec || undefined,
+          distance: derivedDist,
+          pace: paceData.range,
+          description: paceData.effort,
+        };
       });
 
       const wuKm = Math.max(0, Number(profile.warmupDist) || 0);
@@ -463,11 +480,16 @@ const App: React.FC = () => {
       const easyCenter = getEasyRunPaceRange(profile, effectiveDeltaSec).center;
       const intervalKm = newIntervals.reduce((sum, int) => {
         const reps = Math.max(1, Number(int.count) || 1);
-        const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
+        const durationSec = Number(int.durationSec) || 0;
+        const distKm = durationSec > 0
+          ? durationSec / Math.max(1, parsePaceRangeMidSec(int.pace || ''))
+          : Math.max(0, Number(int.distance) || 0) / 1000;
         return sum + (reps * distKm);
       }, 0);
       const workSec = newIntervals.reduce((sum, int) => {
         const reps = Math.max(1, Number(int.count) || 1);
+        const durationSec = Number(int.durationSec) || 0;
+        if (durationSec > 0) return sum + (reps * durationSec);
         const distKm = Math.max(0, Number(int.distance) || 0) / 1000;
         const repPaceSec = parsePaceRangeMidSec(int.pace || '');
         return sum + (reps * distKm * repPaceSec);
@@ -486,7 +508,9 @@ const App: React.FC = () => {
         targetHrLow,
         targetHrHigh,
         title: newIntervals.length
-          ? formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0))
+          ? ((Number(newIntervals[0].durationSec) || 0) > 0
+            ? formatThresholdTimeTitle(Math.max(1, Number(newIntervals[0].count) || 1), Number(newIntervals[0].durationSec))
+            : formatThresholdSessionTitle(Math.max(1, Number(newIntervals[0].count) || 1), Math.max(0, Number(newIntervals[0].distance) || 0)))
           : session.title,
         intervals: newIntervals,
         distance: sessionDistance,
@@ -833,6 +857,7 @@ const App: React.FC = () => {
               <nav className="flex gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                  <button onClick={() => setActiveTab('plan')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'plan' ? 'bg-white dark:bg-slate-700 shadow-sm text-norway-blue' : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'}`}>Weekly Plan</button>
                  <button onClick={() => setActiveTab('pacing')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'pacing' ? 'bg-white dark:bg-slate-700 shadow-sm text-norway-blue' : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'}`}>Pacing Table</button>
+                 <button onClick={() => setActiveTab('insights')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'insights' ? 'bg-white dark:bg-slate-700 shadow-sm text-norway-blue' : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'}`}>Insights</button>
               </nav>
               <div className="flex gap-2">
                  {isAuthenticated && intervalsConfig.connected && (
@@ -974,6 +999,12 @@ const App: React.FC = () => {
                <div className="animate-in fade-in slide-in-from-bottom-2">
                  <PacingTable profile={profile} paceCorrectionSec={0} />
                </div>
+            )}
+
+            {activeTab === 'insights' && (
+              <div className="animate-in fade-in slide-in-from-bottom-2">
+                <InsightsPortal intervalsConfig={intervalsConfig} active={activeTab === 'insights'} />
+              </div>
             )}
 
             {activeTab === 'settings' && (
