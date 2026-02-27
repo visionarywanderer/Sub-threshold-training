@@ -38,6 +38,14 @@ export interface InsightsDataset {
   economy: RunningEconomyPoint[];
   recovery: RecoveryPoint[];
   thresholdProgress: ThresholdProgressPoint[];
+  thresholdContext?: {
+    thresholdPaceSecPerKm?: number;
+    thresholdHrBpm?: number;
+    subTPaceLowSecPerKm?: number;
+    subTPaceHighSecPerKm?: number;
+    subTHrLowBpm?: number;
+    subTHrHighBpm?: number;
+  };
   fetchedAt: string;
 }
 
@@ -70,6 +78,24 @@ const getWeekStartIso = (dateIso: string): string => {
 const getAuthHeaders = (apiKey: string): Record<string, string> => ({
   Authorization: `Basic ${btoa(`API_KEY:${apiKey}`)}`,
 });
+const parsePaceTokenToSec = (value: unknown): number | undefined => {
+  if (value == null) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Handle either sec/km or min/km-like numbers defensively.
+    if (value > 120 && value < 1000) return value;
+    if (value > 2 && value < 12) return Math.round(value * 60);
+  }
+  const raw = String(value).trim().toLowerCase().replace('/km', '');
+  if (!raw) return undefined;
+  const parts = raw.split(':').map((p) => Number(p));
+  if (parts.length === 2 && parts.every((v) => Number.isFinite(v))) {
+    return (parts[0] * 60) + parts[1];
+  }
+  if (parts.length === 3 && parts.every((v) => Number.isFinite(v))) {
+    return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  }
+  return undefined;
+};
 
 const toIsoDate = (value: unknown): string | null => {
   if (!value) return null;
@@ -211,17 +237,36 @@ const fetchWellness = async (config: IntervalsIcuConfig, oldest: string, newest:
   return [];
 };
 
-export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<InsightsDataset> => {
+const fetchAthleteProfile = async (config: IntervalsIcuConfig): Promise<any | null> => {
+  const athlete = config.athleteId || '0';
+  const headers = getAuthHeaders(config.apiKey);
+  const endpoints = [
+    `https://intervals.icu/api/v1/athlete/${athlete}/profile`,
+    `https://intervals.icu/api/v1/athlete/${athlete}`,
+  ];
+  for (const endpoint of endpoints) {
+    try {
+      const data = await fetchJson(endpoint, headers);
+      if (data && typeof data === 'object') return data;
+    } catch {
+      // fallback
+    }
+  }
+  return null;
+};
+
+export const loadInsightsDataset = async (config: IntervalsIcuConfig, lookbackDays = 730): Promise<InsightsDataset> => {
   if (!config.connected || !config.apiKey) {
     throw new Error('Intervals.icu is not connected.');
   }
 
   const newest = fromDateOffset(0);
-  const oldest = fromDateOffset(380);
+  const oldest = fromDateOffset(Math.max(30, Math.round(lookbackDays)));
 
-  const [activities, wellness] = await Promise.all([
+  const [activities, wellness, athleteProfile] = await Promise.all([
     fetchActivities(config, oldest, newest),
     fetchWellness(config, oldest, newest),
+    fetchAthleteProfile(config),
   ]);
 
   const runs = activities.filter(isRunActivity);
@@ -311,7 +356,38 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
   const hrP70 = percentile(hrValues, 70);
   const hrP90 = percentile(hrValues, 90);
   const speedP55 = percentile(speedValues, 55);
-  const normalizationHr = hrP70 > 0 ? hrP70 : (hrP50 > 0 ? hrP50 : 150);
+  const thresholdPaceFromProfile = parsePaceTokenToSec(
+    athleteProfile?.threshold_pace
+    ?? athleteProfile?.thresholdPace
+    ?? athleteProfile?.run_threshold_pace
+    ?? athleteProfile?.zones?.run?.threshold_pace
+    ?? athleteProfile?.zones?.pace?.threshold
+  );
+  const thresholdHrFromProfile = asNumber(
+    athleteProfile?.threshold_hr
+    ?? athleteProfile?.thresholdHr
+    ?? athleteProfile?.run_threshold_hr
+    ?? athleteProfile?.zones?.heart_rate?.threshold
+    ?? athleteProfile?.zones?.run?.threshold_hr
+  );
+  const thresholdPaceSec = thresholdPaceFromProfile && thresholdPaceFromProfile > 0
+    ? thresholdPaceFromProfile
+    : undefined;
+  const nearThresholdHrSamples = runSamples
+    .filter((s) => {
+      if (!thresholdPaceSec) return false;
+      const paceSec = s.speedMps > 0 ? 1000 / s.speedMps : 0;
+      return paceSec > 0 && Math.abs((paceSec - thresholdPaceSec) / thresholdPaceSec) <= 0.05;
+    })
+    .map((s) => s.avgHr)
+    .filter((v) => v > 0);
+  const inferredThresholdHr = nearThresholdHrSamples.length ? median(nearThresholdHrSamples) : undefined;
+  const thresholdHr = thresholdHrFromProfile && thresholdHrFromProfile > 0 ? thresholdHrFromProfile : inferredThresholdHr;
+  const normalizationHr = thresholdHr && thresholdHr > 0 ? (thresholdHr * 0.92) : (hrP70 > 0 ? hrP70 : (hrP50 > 0 ? hrP50 : 150));
+  const subTPaceLow = thresholdPaceSec ? thresholdPaceSec * 1.02 : undefined;
+  const subTPaceHigh = thresholdPaceSec ? thresholdPaceSec * 1.10 : undefined;
+  const subTHrLow = thresholdHr ? thresholdHr * 0.88 : undefined;
+  const subTHrHigh = thresholdHr ? thresholdHr * 0.95 : undefined;
   const weeklyThresholdByWeek = new Map<string, { speeds: number[]; subMin: number; totalMin: number }>();
 
   for (const sample of runSamples) {
@@ -319,11 +395,17 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
     const existing = weeklyThresholdByWeek.get(week) || { speeds: [], subMin: 0, totalMin: 0 };
     existing.totalMin += sample.movingMinutes;
 
+    const paceSec = sample.speedMps > 0 ? (1000 / sample.speedMps) : 0;
+    const matchesPaceBand = subTPaceLow && subTPaceHigh
+      ? (paceSec >= subTPaceLow && paceSec <= subTPaceHigh)
+      : (sample.speedMps >= speedP55 && sample.avgHr >= hrP70);
+    const matchesHrBand = subTHrLow && subTHrHigh
+      ? (sample.avgHr >= subTHrLow && sample.avgHr <= subTHrHigh)
+      : (sample.avgHr >= hrP70 && sample.avgHr <= hrP90);
     const likelySubthreshold = sample.taggedSubthreshold || (
-      sample.avgHr >= hrP70 &&
-      sample.avgHr <= hrP90 &&
-      sample.speedMps >= speedP55 &&
-      sample.movingMinutes >= 30
+      matchesPaceBand &&
+      matchesHrBand &&
+      sample.movingMinutes >= 25
     );
 
     if (likelySubthreshold) {
@@ -461,6 +543,14 @@ export const loadInsightsDataset = async (config: IntervalsIcuConfig): Promise<I
     economy,
     recovery,
     thresholdProgress,
+    thresholdContext: {
+      thresholdPaceSecPerKm: thresholdPaceSec ? Number(thresholdPaceSec.toFixed(1)) : undefined,
+      thresholdHrBpm: thresholdHr ? Math.round(thresholdHr) : undefined,
+      subTPaceLowSecPerKm: subTPaceLow ? Number(subTPaceLow.toFixed(1)) : undefined,
+      subTPaceHighSecPerKm: subTPaceHigh ? Number(subTPaceHigh.toFixed(1)) : undefined,
+      subTHrLowBpm: subTHrLow ? Math.round(subTHrLow) : undefined,
+      subTHrHighBpm: subTHrHigh ? Math.round(subTHrHigh) : undefined,
+    },
     fetchedAt: new Date().toISOString(),
   };
 };
@@ -481,6 +571,14 @@ export const filterByRange = <T extends { date: string }>(rows: T[], range: Insi
   const cutoffIso = cutoff.toISOString().slice(0, 10);
 
   const filtered = rows.filter((row) => row.date >= cutoffIso);
-  if (!filtered.length) return rows;
   return filtered;
+};
+
+export const rangeToDays = (range: InsightsRangeKey): number => {
+  if (range === '1d') return 1;
+  if (range === '1w') return 7;
+  if (range === '1m') return 31;
+  if (range === '3m') return 92;
+  if (range === '6m') return 183;
+  return 366;
 };

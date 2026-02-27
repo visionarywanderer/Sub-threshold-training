@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Activity, HeartPulse, GaugeCircle, Timer, Zap } from 'lucide-react';
 import { IntervalsIcuConfig } from '../types';
-import { InsightsDataset, InsightsRangeKey, RunningEconomyPoint, RecoveryPoint, ThresholdProgressPoint, filterByRange, loadInsightsDataset } from '../services/intervalsInsightsService';
+import { InsightsDataset, InsightsRangeKey, RunningEconomyPoint, RecoveryPoint, ThresholdProgressPoint, filterByRange, loadInsightsDataset, rangeToDays } from '../services/intervalsInsightsService';
 import { secondsToTime } from '../utils/calculations';
 
 interface InsightsPortalProps {
@@ -140,13 +140,17 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
   const [economyRange, setEconomyRange] = useState<InsightsRangeKey>('3m');
   const [thresholdRange, setThresholdRange] = useState<InsightsRangeKey>('3m');
   const [recoveryRange, setRecoveryRange] = useState<InsightsRangeKey>('1m');
+  const lookbackDays = useMemo(
+    () => Math.max(rangeToDays(economyRange), rangeToDays(thresholdRange), rangeToDays(recoveryRange)) + 60,
+    [economyRange, recoveryRange, thresholdRange]
+  );
 
   const loadData = async () => {
     if (!intervalsConfig.connected) return;
     setLoading(true);
     setError('');
     try {
-      const next = await loadInsightsDataset(intervalsConfig);
+      const next = await loadInsightsDataset(intervalsConfig, lookbackDays);
       setDataset(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load insights');
@@ -158,7 +162,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
   useEffect(() => {
     if (!active || !intervalsConfig.connected) return;
     void loadData();
-  }, [active, intervalsConfig.connected, intervalsConfig.apiKey, intervalsConfig.athleteId]);
+  }, [active, intervalsConfig.connected, intervalsConfig.apiKey, intervalsConfig.athleteId, lookbackDays]);
 
   const economyRows = useMemo(() => {
     if (!dataset) return [] as RunningEconomyPoint[];
@@ -201,8 +205,8 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         key: 'economy',
         title: 'Economy',
         value: latestEconomy.economyScore.toFixed(2),
-        subtitle: 'meters/heartbeat proxy',
-        tone: metricTone(latestEconomy.economyScore || 0, 2.1, 1.7),
+        subtitle: 'index (min 60 · max 140)',
+        tone: metricTone(latestEconomy.economyScore || 0, 105, 95),
         icon: <GaugeCircle size={13} />,
       });
       cards.push({
@@ -218,7 +222,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         key: 'recovery',
         title: 'Recovery Score',
         value: `${Math.round(latestRecovery.recoveryScore)}`,
-        subtitle: 'HRV + Resting HR + load balance',
+        subtitle: 'score 0-100',
         tone: metricTone(latestRecovery.recoveryScore || 0, 75, 60),
         icon: <HeartPulse size={13} />,
       });
@@ -228,7 +232,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         key: 'load',
         title: 'Load Ratio',
         value: latestRecovery.loadRatio.toFixed(2),
-        subtitle: '7-day / 28-day',
+        subtitle: '7d/28d (target 0.8-1.2)',
         icon: <Activity size={13} />,
       });
     }
@@ -237,7 +241,7 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
         key: 'threshold-speed',
         title: 'SubT Speed',
         value: `${latestThreshold.thresholdSpeedKmh.toFixed(1)} km/h`,
-        subtitle: 'weekly subthreshold pace performance',
+        subtitle: 'weekly (typical 10-22 km/h)',
         icon: <Zap size={13} />,
       });
     }
@@ -261,6 +265,18 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
               Simplified view of recovery and running economy based on Intervals.icu data.
             </p>
+            {dataset?.thresholdContext?.thresholdPaceSecPerKm ? (
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Threshold context from Intervals: {secondsToTime(dataset.thresholdContext.thresholdPaceSecPerKm)}/km
+                {dataset.thresholdContext.thresholdHrBpm ? ` · ${dataset.thresholdContext.thresholdHrBpm} bpm` : ''}
+                {dataset.thresholdContext.subTPaceLowSecPerKm && dataset.thresholdContext.subTPaceHighSecPerKm
+                  ? ` · SubT pace band ${secondsToTime(dataset.thresholdContext.subTPaceLowSecPerKm)}-${secondsToTime(dataset.thresholdContext.subTPaceHighSecPerKm)}/km`
+                  : ''}
+                {dataset.thresholdContext.subTHrLowBpm && dataset.thresholdContext.subTHrHighBpm
+                  ? ` · SubT HR band ${dataset.thresholdContext.subTHrLowBpm}-${dataset.thresholdContext.subTHrHighBpm} bpm`
+                  : ''}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -295,6 +311,59 @@ const InsightsPortal: React.FC<InsightsPortalProps> = ({ intervalsConfig, active
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{card.subtitle}</p>
             </article>
           ))}
+        </section>
+      )}
+
+      {metricCards.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 p-4">
+          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">How to read these values</h4>
+          <div className="mt-3 grid md:grid-cols-2 xl:grid-cols-4 gap-2.5 text-xs">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              Economy index: min 60, max 140. 100 = your early baseline.
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              Recovery score: 0-100. Higher means better readiness.
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              Load ratio target: 0.8-1.2. Above 1.3 increases fatigue risk.
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              Method score: 0-100, based on match vs your configured SubT % target.
+            </div>
+          </div>
+        </section>
+      )}
+
+      {metricCards.length > 0 && (
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 p-4">
+          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">How metrics are calculated</h4>
+          <div className="mt-3 grid md:grid-cols-2 gap-2.5 text-xs">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              <p className="font-semibold text-slate-800 dark:text-slate-100">Running Economy (Index)</p>
+              <p className="mt-1">For each run sample: HR-normalized speed = speed_m/s × (normalization_HR ÷ avg_HR). Daily economy is averaged, then indexed vs early baseline (100 = baseline).</p>
+              <p className="mt-1">Range shown: 60-140.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              <p className="font-semibold text-slate-800 dark:text-slate-100">Recovery Score</p>
+              <p className="mt-1">Weighted score = HRV component (45%) + Resting HR component (35%) + Load component (20%). HRV/RHR are compared to your personal median baselines.</p>
+              <p className="mt-1">Range: 0-100.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              <p className="font-semibold text-slate-800 dark:text-slate-100">Load Ratio</p>
+              <p className="mt-1">Acute-to-chronic ratio = 7-day rolling load ÷ 28-day rolling load.</p>
+              <p className="mt-1">Target band: 0.8-1.2.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300">
+              <p className="font-semibold text-slate-800 dark:text-slate-100">SubT Speed</p>
+              <p className="mt-1">Weekly average speed from sessions classified as subthreshold using Intervals threshold context (pace/HR bands) or explicit SubT workout tags.</p>
+              <p className="mt-1">Displayed in km/h and pace/km.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5 text-slate-600 dark:text-slate-300 md:col-span-2">
+              <p className="font-semibold text-slate-800 dark:text-slate-100">Norwegian Method Score</p>
+              <p className="mt-1">Score reflects how close your weekly SubT share is to your configured plan target. Formula: 100 - (|actual_subT% - target_subT%| × 3), clipped to 0-100.</p>
+              <p className="mt-1">Range: 0-100 (higher means your weekly intensity distribution matches your plan better).</p>
+            </div>
+          </div>
         </section>
       )}
 
