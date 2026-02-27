@@ -685,54 +685,82 @@ const App: React.FC = () => {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
-        <main className="max-w-5xl mx-auto px-6 py-16 md:py-24">
-          <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 shadow-sm p-8 md:p-12">
-            <div className="pointer-events-none absolute -top-20 -right-14 w-56 h-56 bg-norway-blue/10 dark:bg-norway-blue/20 rounded-full blur-2xl" />
-            <div className="pointer-events-none absolute -bottom-24 -left-16 w-64 h-64 bg-slate-300/30 dark:bg-slate-500/20 rounded-full blur-2xl" />
-
-            <div className="relative">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                NorskFlow
-              </div>
-              <h1 className="mt-5 text-3xl md:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                Subthreshold Training Planner
-              </h1>
-              <p className="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-300 max-w-3xl">
-                NorskFlow brings the Norwegian single-method approach to subthreshold training across run, trail, treadmill, and cycling. Plan your week, customize each workout, and sync structured sessions to Intervals.icu for Garmin.
-              </p>
-              <div className="mt-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
-                <p className="font-semibold text-slate-800 dark:text-slate-100">What is the Norwegian subthreshold method?</p>
-                <p className="mt-1">It prioritizes controlled work below lactate turnpoint to accumulate high-quality volume with lower fatigue cost, improving aerobic power, repeatability, and consistency week after week.</p>
-              </div>
-
-              <div className="mt-8 grid sm:grid-cols-2 gap-3 text-sm">
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Run + bike planning with per-day sport selection</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Road, trail, treadmill, and stationary bike environments</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Subthreshold workout editing with zone, pace, and optional FTP targets</div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-4 py-3">Intervals.icu structured sync (FIT) designed for Garmin calendar and device workflows</div>
-              </div>
-              <div className="mt-4 text-sm text-slate-600 dark:text-slate-300">
-                Starts with an intermediate default template so you immediately see a working week before manual setup.
-              </div>
-              <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                Coming soon: swimming sessions and brick workouts for triathlon planning.
-              </div>
-
-              <div className="mt-10 flex flex-col sm:flex-row sm:items-center gap-4">
-                {GOOGLE_CLIENT_ID ? (
-                  <div id="google-login-btn"></div>
-                ) : (
-                  <p className="text-sm text-red-600 dark:text-red-300">
-                    Google login is not configured. Set <code className="font-mono">VITE_GOOGLE_CLIENT_ID</code>.
-                  </p>
-                )}
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Sign in with Google to access your dashboard and saved training data.
+        <main className="max-w-6xl mx-auto px-6 py-12 md:py-16 space-y-8">
+          <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 shadow-sm p-8 md:p-12">
+            <div className="pointer-events-none absolute -top-24 -right-16 w-72 h-72 bg-norway-blue/10 dark:bg-norway-blue/20 rounded-full blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-28 -left-20 w-80 h-80 bg-slate-300/35 dark:bg-slate-500/20 rounded-full blur-3xl" />
+            <div className="relative grid lg:grid-cols-2 gap-8 items-start">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  NorskFlow
+                </div>
+                <h1 className="mt-5 text-3xl md:text-5xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                  Subthreshold Training Planner
+                </h1>
+                <p className="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-300 max-w-2xl">
+                  NorskFlow brings the Norwegian single-method approach to subthreshold training across run, trail, treadmill, and cycling. Plan your week, customize each workout, and sync structured sessions to Intervals.icu for Garmin.
                 </p>
+                <div className="mt-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/70 px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">What is the Norwegian subthreshold method?</p>
+                  <p className="mt-1">It prioritizes controlled work below lactate turnpoint to accumulate high-quality volume with lower fatigue cost, improving aerobic power, repeatability, and consistency week after week.</p>
+                </div>
+                <div className="mt-8 flex flex-col sm:flex-row sm:items-center gap-4">
+                  {GOOGLE_CLIENT_ID ? (
+                    <div id="google-login-btn"></div>
+                  ) : (
+                    <p className="text-sm text-red-600 dark:text-red-300">
+                      Google login is not configured. Set <code className="font-mono">VITE_GOOGLE_CLIENT_ID</code>.
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Sign in with Google to access your dashboard and saved training data.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Performance Snapshot</h3>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">Example</span>
+                </div>
+                <svg viewBox="0 0 360 180" className="w-full h-44">
+                  <rect x="0" y="0" width="360" height="180" fill="transparent" />
+                  {[30, 60, 90, 120, 150].map((y) => (
+                    <line key={y} x1="0" y1={y} x2="360" y2={y} stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeWidth="1" />
+                  ))}
+                  <path d="M0 142 L40 136 L80 128 L120 120 L160 112 L200 104 L240 93 L280 82 L320 72 L360 66" fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" />
+                  <path d="M0 126 L40 124 L80 120 L120 118 L160 112 L200 108 L240 101 L280 98 L320 92 L360 88" fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5">
+                    <p className="text-slate-500 dark:text-slate-400">SubT Speed</p>
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">+6.3%</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5">
+                    <p className="text-slate-500 dark:text-slate-400">Recovery Trend</p>
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">Stable ↑</p>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
-          <section className="mt-8 grid md:grid-cols-2 gap-6">
+
+          <section className="grid md:grid-cols-3 gap-4">
+            <article className="rounded-2xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-5">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Plan</h3>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Starts with an intermediate default template so you immediately see a working week before manual setup.</p>
+            </article>
+            <article className="rounded-2xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-5">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Adjust</h3>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Switch between distance and time intervals, select road/trail/treadmill/stationary bike, and edit session structure with pace or zones.</p>
+            </article>
+            <article className="rounded-2xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-5">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Sync</h3>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Push structured FIT workouts to Intervals.icu with Garmin-compatible steps and schedule the full week in one flow.</p>
+            </article>
+          </section>
+
+          <section className="grid lg:grid-cols-2 gap-6">
             <article className="rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-6">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Why Subthreshold Works</h3>
               <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
@@ -743,12 +771,15 @@ const App: React.FC = () => {
             </article>
             <article className="rounded-3xl border border-slate-200/80 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 p-6">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">What You Can Do In NorskFlow</h3>
-              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
-                <li>Plan weekly run and bike sessions with road/trail/treadmill/stationary options.</li>
-                <li>Use weather-aware pace guidance and structured step editing.</li>
-                <li>Sync structured FIT workouts to Intervals.icu for Garmin execution.</li>
-                <li>Coming soon: swimming and brick workout blocks for triathlon.</li>
-              </ul>
+              <div className="mt-3 grid sm:grid-cols-2 gap-2.5 text-sm text-slate-600 dark:text-slate-300">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5">Run + bike planning with per-day sport selection</div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5">Road, trail, treadmill, and stationary bike environments</div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5">Subthreshold workout editing with zone, pace, and optional FTP targets</div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-800/80 px-3 py-2.5">Intervals.icu structured sync (FIT) designed for Garmin calendar and device workflows</div>
+              </div>
+              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+                Coming soon: swimming sessions and brick workouts for triathlon planning.
+              </p>
             </article>
           </section>
         </main>
