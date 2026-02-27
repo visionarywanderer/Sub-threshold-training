@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { UserProfile, DistanceUnit, WeeklyPlan, DayType, UserSchedule, IntervalsIcuConfig, WorkoutSession, WorkoutType, TrainingSport } from './types';
-import { calculateVDOTFromRace, formatThresholdSessionTitle, formatThresholdTimeTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getWeatherPaceDeltaSeconds, secondsToTime, getTreadmillPaceDeltaSeconds, DEFAULT_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, MAX_TREADMILL_INCLINE } from './utils/calculations';
+import { calculateVDOTFromRace, formatThresholdSessionTitle, formatThresholdTimeTitle, generatePlan, calculateThresholdPace, getEasyRunPaceRange, getIntervalPaceRange, getThresholdDurationAnchorDistance, getWeatherPaceDeltaSeconds, secondsToTime, getTreadmillPaceDeltaSeconds, DEFAULT_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, MAX_TREADMILL_INCLINE } from './utils/calculations';
 import { deleteWorkoutFromIcu, syncWorkoutToIcu, syncWorkoutsBulkToIcu } from './services/intervalsService';
 import PacingTable from './components/PacingTable';
 import IntervalsModal from './components/IntervalsModal';
@@ -460,7 +460,7 @@ const App: React.FC = () => {
       const newIntervals = (session.intervals || []).map((int) => {
         const dist = Number(int.distance) || 0;
         const durationSec = Number(int.durationSec) || 0;
-        const anchorDist = durationSec > 0 ? Math.max(400, Math.round((durationSec / 60) * 330)) : dist;
+        const anchorDist = durationSec > 0 ? getThresholdDurationAnchorDistance(durationSec) : dist;
         const paceData = getIntervalPaceRange(profile, anchorDist, effectiveDeltaSec);
         const paceMidSec = parsePaceRangeMidSec(paceData.range);
         const derivedDist = durationSec > 0 && paceMidSec > 0

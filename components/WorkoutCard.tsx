@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, GripVertical, RefreshCw, Cloud, CloudRain, CloudSun, Snowflake, Sun, Route, Trees, Bike, Monitor } from 'lucide-react';
 import { WorkoutSession, WorkoutType, UserProfile } from '../types';
-import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, DEFAULT_TREADMILL_INCLINE, formatThresholdSessionTitle, formatThresholdTimeTitle, getEasyRunPaceRange, getIntervalPaceRange, getTreadmillPaceDeltaSeconds, MAX_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, secondsToTime } from '../utils/calculations';
+import { applyPaceCorrection, calculatePaceForDistance, calculateThresholdPace, DEFAULT_TREADMILL_INCLINE, formatThresholdSessionTitle, formatThresholdTimeTitle, getEasyRunPaceRange, getIntervalPaceRange, getThresholdDurationAnchorDistance, getTreadmillPaceDeltaSeconds, MAX_TREADMILL_INCLINE, MIN_TREADMILL_INCLINE, secondsToTime } from '../utils/calculations';
 
 interface DailyForecast {
   date: string;
@@ -236,9 +236,10 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
     if (session.type === WorkoutType.THRESHOLD) {
       const newIntervals = (session.intervals || []).map((int) => {
         const dist = Number(int.distance) || 0;
-        const paceData = getIntervalPaceRange(profile, dist, effectivePaceCorrectionSec);
-        const paceMidSec = parsePaceRangeMidSec(paceData.range);
         const durationSec = Number(int.durationSec) || 0;
+        const anchorDist = durationSec > 0 ? getThresholdDurationAnchorDistance(durationSec) : dist;
+        const paceData = getIntervalPaceRange(profile, anchorDist, effectivePaceCorrectionSec);
+        const paceMidSec = parsePaceRangeMidSec(paceData.range);
         const derivedDist = durationSec > 0 && paceMidSec > 0
           ? Math.round(((durationSec / paceMidSec) * 1000))
           : dist;
@@ -359,7 +360,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
 
       if (field === 'distance' || field === 'durationSec') {
         const anchorDist = field === 'durationSec'
-          ? Math.max(400, Math.round(((Number(updated.durationSec) || 0) / 60) * 330))
+          ? getThresholdDurationAnchorDistance(Number(updated.durationSec) || 0)
           : Number(updated.distance);
         const paceData = getIntervalPaceRange(profile, anchorDist, effectivePaceCorrectionSec);
         updated.pace = paceData.range;
@@ -788,6 +789,11 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                         </button>
                       ))}
                     </div>
+                    {!isBike && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-300 mt-1">
+                        Uses recovery pace range (same as Easy Run pace).
+                      </p>
+                    )}
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-300">{isBike ? 'Zone-based aerobic ride' : `Subthreshold ${thresholdPace}/km`}</div>
                 </div>
@@ -848,7 +854,7 @@ const WorkoutCard: React.FC<WorkoutCardProps> = ({
                             onChange={(e) => updateInterval(i, 'durationSec', e.target.value)}
                             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100"
                           >
-                            {[180, 360, 720, 1200].map((s) => (
+                            {[180, 360, 600, 1200].map((s) => (
                               <option key={s} value={s}>{formatDurationToken(s)}</option>
                             ))}
                           </select>

@@ -14,6 +14,13 @@ export const formatThresholdTimeTitle = (reps: number, durationSec: number): str
   const mins = Math.max(1, Math.round((Number(durationSec) || 0) / 60));
   return `SubT ${safeReps}x${mins}:00`;
 };
+export const getThresholdDurationAnchorDistance = (durationSec: number): number => {
+  const mins = Math.max(1, (Number(durationSec) || 0) / 60);
+  if (mins <= 4) return 1000;   // 3:00 -> 1k pace anchor
+  if (mins <= 7) return 2000;   // 6:00 -> 2k pace anchor
+  if (mins <= 14) return 3000;  // 10:00 (and 12:00) -> 3k pace anchor
+  return 5000;                  // 20:00 -> 5k pace anchor
+};
 
 export const timeToSeconds = (time: string): number => {
   if (!time) return 0;
@@ -312,9 +319,9 @@ export const generatePlan = (profile: UserProfile, correctionSec = 0): WeeklyPla
   const cd = profile.cooldownDist;
 
   const thresholdTemplates = [
-    { reps: 10, durationSec: 3 * 60, anchorDist: 1000, rest: '60s' }, // 10x3:00
-    { reps: 8, durationSec: 6 * 60, anchorDist: 2000, rest: '75s' }, // 8x6:00
-    { reps: 3, durationSec: 12 * 60, anchorDist: 3000, rest: '120s' }, // 3x12:00
+    { reps: 10, durationSec: 3 * 60, anchorDist: 1000, rest: '60s' }, // 10x3:00 (1k anchor)
+    { reps: 8, durationSec: 6 * 60, anchorDist: 2000, rest: '75s' }, // 8x6:00 (2k anchor)
+    { reps: 3, durationSec: 10 * 60, anchorDist: 3000, rest: '120s' }, // 3x10:00 (3k anchor)
   ];
   const thresholdDays = Object.entries(profile.schedule)
     .filter(([, t]) => t === DayType.THRESHOLD)
